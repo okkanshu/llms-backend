@@ -43,12 +43,8 @@ app.use(
       "Accept",
     ],
     optionsSuccessStatus: 200,
-    preflightContinue: false,
   })
 );
-
-// Handle preflight requests explicitly
-app.options("*", cors());
 
 // Other middleware
 app.use(helmet());
