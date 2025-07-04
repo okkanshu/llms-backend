@@ -13,6 +13,10 @@ const PORT = process.env.PORT || 8000;
 
 // Middleware
 app.use(helmet());
+
+// Handle preflight requests
+app.options("*", cors());
+
 const allowedOrigins = [
   "https://thellmstxt.com",
   "https://llmstxt.store",
@@ -33,6 +37,8 @@ app.use(
       }
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
 app.use(express.json({ limit: "10mb" }));
