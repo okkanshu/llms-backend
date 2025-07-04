@@ -1,5 +1,4 @@
 import { Router, Request, Response } from "express";
-import cors from "cors";
 import { firecrawlService } from "../services/firecrawl.service";
 import {
   WebsiteAnalysisRequestSchema,
@@ -8,34 +7,12 @@ import {
 
 const router = Router();
 
-// CORS configuration for this route
-const corsOptions = {
-  origin: [
-    "https://thellmstxt.com",
-    "https://llmstxt.store",
-    "http://localhost:3000",
-    "http://localhost:3001",
-    "http://localhost:8000",
-  ],
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-  optionsSuccessStatus: 200,
-};
-
-/**
- * OPTIONS /api/analyze-website
- * Handle preflight requests for the analyze-website endpoint
- */
-router.options("/analyze-website", cors(corsOptions));
-
 /**
  * POST /api/analyze-website
  * Analyze a website and extract metadata and paths
  */
 router.post(
   "/analyze-website",
-  cors(corsOptions),
   async (req: Request, res: Response) => {
     const startTime = Date.now();
 
