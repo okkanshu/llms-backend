@@ -14,9 +14,6 @@ const PORT = process.env.PORT || 8000;
 // Middleware
 app.use(helmet());
 
-// Handle preflight requests
-app.options("*", cors());
-
 const allowedOrigins = [
   "https://thellmstxt.com",
   "https://llmstxt.store",
@@ -25,22 +22,27 @@ const allowedOrigins = [
   "http://localhost:8000",
 ];
 
-app.use(
-  cors({
-    origin: (origin, callback) => {
-      // Allow requests with no origin (like curl, Postman, etc.)
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      } else {
-        return callback(new Error("Not allowed by CORS"));
-      }
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  })
-);
+const corsOptions = {
+  origin: (
+    origin: string | undefined,
+    callback: (error: Error | null, allow?: boolean) => void
+  ) => {
+    // Allow requests with no origin (like curl, Postman, etc.)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error("Not allowed by CORS"));
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  optionsSuccessStatus: 200, // some legacy browsers (IE11, various SmartTVs) choke on 204
+};
+
+// Apply CORS middleware - this handles both preflight and actual requests
+app.use(cors(corsOptions));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
