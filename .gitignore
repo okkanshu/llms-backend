@@ -1,0 +1,49 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp/
+.pnp.js
+.env
+.env*.local
+
+
+# TypeScript
+*.tsbuildinfo
+
+# IDEs and OS
+.idea/
+.vscode/
+*.suo
+*.user
+*.log
+*.bak
+*.ilk
+*.obj
+*.pdb
+*.dll
+*.exe
+*.lib
+*.so
+*.dylib
+*.o
+*.a
+*.pyc
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Dependencies
+/node_modules
+
+# Misc
+.env
+.env.local
+.DS_Store
+npm-debug.log*
+yarn-debug.log*
