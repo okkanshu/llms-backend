@@ -16,7 +16,7 @@ const websiteDataSchema = zod_1.z.object({
 });
 class FirecrawlService {
     constructor() {
-        this.apiKey = "fc-55931a898b814c2084cf786e41b60260";
+        this.apiKey = process.env.FIRECRAWL_API_KEY || "";
         this.app = new firecrawl_js_1.default({
             apiKey: this.apiKey,
         });
@@ -32,36 +32,78 @@ class FirecrawlService {
             const tempAllLinks = [];
             const tempPageData = [];
             const tempDuplicateTracker = new Set();
-            console.log("🕷️ Starting website crawl to discover pages...");
-            const crawlResult = (await this.app.crawlUrl(url, {
-                limit: 70,
-                scrapeOptions: {
-                    formats: ["markdown", "html"],
-                },
-            }));
-            console.log("📊 Crawl completed:", {
-                success: crawlResult.success,
-                status: crawlResult.status,
-            });
-            if (!crawlResult.success) {
-                console.error("❌ Crawl failed:", crawlResult.error);
-                throw new Error(`Crawl failed: ${crawlResult.error}`);
-            }
-            if (!crawlResult.data || !Array.isArray(crawlResult.data)) {
-                console.error("❌ No crawl data available");
-                throw new Error("No crawl data available");
-            }
-            console.log("📊 Crawl data available:", {
-                totalPages: crawlResult.data.length,
-                status: crawlResult.status,
-            });
-            console.log("🔍 Extracting data from discovered pages...");
             let mainPageData = null;
-            for (const page of crawlResult.data) {
-                const pageUrl = page.metadata?.sourceURL || page.metadata?.url;
-                if (!pageUrl)
-                    continue;
-                console.log(`📄 Processing page: ${pageUrl}`);
+            let mainPageLinks = [];
+            try {
+                const mainMeta = await this.app.scrapeUrl(url, {
+                    formats: ["json"],
+                    jsonOptions: {
+                        schema: websiteDataSchema,
+                        prompt: "Extract the title, description, keywords, and internal links from this page. Return JSON with fields: title, description, keywords, links (array).",
+                    },
+                    onlyMainContent: false,
+                });
+                if (mainMeta && mainMeta.metadata) {
+                    const metaAny = mainMeta;
+                    mainPageData = metaAny.metadata;
+                    if (metaAny.json && Array.isArray(metaAny.json.links)) {
+                        mainPageLinks = metaAny.json.links;
+                    }
+                    else if (Array.isArray(metaAny.links)) {
+                        mainPageLinks = metaAny.links;
+                    }
+                    console.log("📋 Main page metadata fetched via scrapeUrl:", {
+                        title: mainPageData.title,
+                        description: mainPageData.description?.substring(0, 200) + "...",
+                        linksFound: mainPageLinks.length,
+                    });
+                }
+            }
+            catch (scrapeErr) {
+                console.warn("⚠️ scrapeUrl failed, continuing without it:", scrapeErr);
+            }
+            console.log("🔍 Discovering pages from main page links...");
+            const discoveredUrls = [];
+            if (mainPageLinks.length > 0) {
+                const baseDomain = new URL(url).hostname;
+                for (const link of mainPageLinks) {
+                    try {
+                        const absolute = new URL(link, url);
+                        if (absolute.hostname === baseDomain) {
+                            discoveredUrls.push(absolute.href);
+                        }
+                    }
+                    catch { }
+                }
+            }
+            try {
+                console.log("🔍 Augmenting discovery via Firecrawl map...");
+                const mapRes = await this.app.mapUrl(url, { limit: 100 });
+                if (mapRes.success && Array.isArray(mapRes.links)) {
+                    const baseDomain = new URL(url).hostname;
+                    mapRes.links.forEach((link) => {
+                        try {
+                            const absolute = new URL(link, url);
+                            if (absolute.hostname === baseDomain) {
+                                discoveredUrls.push(absolute.href);
+                            }
+                        }
+                        catch { }
+                    });
+                    console.log(`📊 Map API added ${mapRes.links.length} links (total discovered: ${discoveredUrls.length})`);
+                }
+                else {
+                    console.warn("⚠️ Map API did not return links or failed", mapRes.error);
+                }
+            }
+            catch (mapErr) {
+                console.warn("⚠️ mapUrl failed, continuing without it:", mapErr);
+            }
+            const uniqueDiscovered = [...new Set(discoveredUrls)].slice(0, 100);
+            console.log(`📊 Discovered ${uniqueDiscovered.length} internal links to extract`);
+            for (let i = 0; i < uniqueDiscovered.length; i++) {
+                const pageUrl = uniqueDiscovered[i];
+                console.log(`📄 Processing page ${i + 1}/${uniqueDiscovered.length}: ${pageUrl}`);
                 try {
                     const extractResult = (await this.app.extract([pageUrl], {
                         prompt: "Extract the title, description, keywords, and all internal links from this page. Return as JSON with fields: title, description, keywords, links (array of internal URLs).",
@@ -69,16 +111,25 @@ class FirecrawlService {
                     }));
                     if (extractResult.success && extractResult.data) {
                         const extractedData = extractResult.data;
+                        const pagePath = (() => {
+                            try {
+                                const u = new URL(pageUrl);
+                                return u.pathname.endsWith("/") && u.pathname !== "/"
+                                    ? u.pathname.slice(0, -1)
+                                    : u.pathname || "/";
+                            }
+                            catch {
+                                return pageUrl;
+                            }
+                        })();
                         tempPageData.push({
                             url: pageUrl,
+                            path: pagePath,
                             title: extractedData.title,
                             description: extractedData.description,
                             keywords: extractedData.keywords,
                             links: extractedData.links || [],
                         });
-                        if (!mainPageData && (pageUrl === url || pageUrl.endsWith("/"))) {
-                            mainPageData = extractedData;
-                        }
                         if (extractedData.links && Array.isArray(extractedData.links)) {
                             extractedData.links.forEach((link) => {
                                 tempAllLinks.push(link);
@@ -87,6 +138,8 @@ class FirecrawlService {
                         }
                         console.log(`✅ Extracted from ${pageUrl}:`, {
                             title: extractedData.title,
+                            description: extractedData.description,
+                            keywords: extractedData.keywords,
                             linksCount: extractedData.links?.length || 0,
                             uniqueLinksInPage: new Set(extractedData.links || []).size,
                         });
@@ -96,34 +149,14 @@ class FirecrawlService {
                     console.warn(`⚠️ Failed to extract from ${pageUrl}:`, extractError);
                 }
             }
-            console.log("🎯 Extracting from main URL for comprehensive data...");
-            const mainExtractResult = (await this.app.extract([url], {
-                prompt: "Extract the title, description, keywords, and all internal links from this page. Return as JSON with fields: title, description, keywords, links (array of internal URLs).",
-                schema: websiteDataSchema,
-            }));
-            if (mainExtractResult.success && mainExtractResult.data) {
-                const mainData = mainExtractResult.data;
-                if (!mainPageData) {
-                    mainPageData = mainData;
-                }
-                if (mainData.links && Array.isArray(mainData.links)) {
-                    mainData.links.forEach((link) => {
-                        tempAllLinks.push(link);
-                        tempDuplicateTracker.add(link);
-                    });
-                }
-                console.log("📋 Main page extracted data:", {
-                    title: mainData.title,
-                    description: mainData.description?.substring(0, 200) + "...",
-                    linksCount: mainData.links?.length || 0,
-                });
-            }
             const uniqueLinks = [...new Set(tempAllLinks)];
             console.log(`🔗 Found ${uniqueLinks.length} unique links across all pages (${tempAllLinks.length} total, ${tempAllLinks.length - uniqueLinks.length} duplicates removed)`);
             const uniquePaths = this.extractUniquePaths(uniqueLinks, url);
             console.log(`✅ Filtered to ${uniquePaths.length} unique internal paths`);
             const pageMetadatas = uniquePaths.map((path) => {
-                const match = tempPageData.find((p) => p.links.includes(path)) || tempPageData[0];
+                const match = tempPageData.find((p) => p.path === path) ||
+                    tempPageData.find((p) => p.links.includes(path)) ||
+                    tempPageData[0];
                 return {
                     path,
                     title: match?.title || "",
@@ -135,7 +168,7 @@ class FirecrawlService {
                 title: mainPageData?.title || "Untitled",
                 description: mainPageData?.description || "No description available",
                 paths: uniquePaths,
-                totalPagesCrawled: crawlResult.data.length,
+                totalPagesCrawled: tempPageData.length,
                 totalLinksFound: tempAllLinks.length,
                 uniquePathsFound: uniquePaths.length,
                 pageMetadatas,

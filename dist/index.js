@@ -7,8 +7,12 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const dotenv_1 = __importDefault(require("dotenv"));
+const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
+const swagger_jsdoc_1 = __importDefault(require("swagger-jsdoc"));
+const swagger_ui_express_1 = __importDefault(require("swagger-ui-express"));
 const types_1 = require("./types");
 const website_analysis_1 = __importDefault(require("./routes/website-analysis"));
+const llms_enhanced_1 = __importDefault(require("./routes/llms-enhanced"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 8000;
@@ -41,14 +45,66 @@ app.use((0, cors_1.default)({
     ],
     optionsSuccessStatus: 200,
 }));
+const limiter = (0, express_rate_limit_1.default)({
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || "900000"),
+    max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || "100"),
+    message: {
+        success: false,
+        error: "Too many requests from this IP, please try again later.",
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+app.use(limiter);
 app.use((0, helmet_1.default)());
 app.use(express_1.default.json({ limit: "10mb" }));
 app.use(express_1.default.urlencoded({ extended: true }));
+const swaggerOptions = {
+    definition: {
+        openapi: "3.0.0",
+        info: {
+            title: "TheLLMsTxt API",
+            version: "1.0.0",
+            description: "API for generating LLMs.txt and enhanced LLM crawler configuration files",
+            contact: {
+                name: "TheLLMsTxt Support",
+                url: "https://thellmstxt.com",
+            },
+        },
+        servers: [
+            {
+                url: `http://localhost:${PORT}`,
+                description: "Development server",
+            },
+            {
+                url: "https://api.thellmstxt.com",
+                description: "Production server",
+            },
+        ],
+        components: {
+            securitySchemes: {
+                ApiKeyAuth: {
+                    type: "apiKey",
+                    in: "header",
+                    name: "X-API-Key",
+                },
+            },
+        },
+    },
+    apis: ["./src/routes/*.ts"],
+};
+const specs = (0, swagger_jsdoc_1.default)(swaggerOptions);
 app.get("/health", (req, res) => {
     res.json({
         status: "OK",
         timestamp: new Date().toISOString(),
         service: "TheLLMsTxt Backend",
+        version: "1.0.0",
+        features: {
+            ai_enrichment: !!process.env.GEMINI_API_KEY,
+            automation: process.env.AUTOMATION_ENABLED === "true",
+            analytics: process.env.ANALYTICS_ENABLED === "true",
+        },
     });
 });
 app.get("/api/llm-bots", (req, res) => {
@@ -57,12 +113,32 @@ app.get("/api/llm-bots", (req, res) => {
         bots: Object.values(types_1.LLM_BOT_CONFIGS),
     });
 });
+app.use("/api-docs", swagger_ui_express_1.default.serve, swagger_ui_express_1.default.setup(specs));
 app.use("/api", website_analysis_1.default);
+app.use("/api", llms_enhanced_1.default);
 app.get("/", (req, res) => {
     res.json({
         success: true,
         message: "Welcome to TheLLMsTxt Backend API!",
-        endpoints: ["/health", "/api/llm-bots", "/api/analyze-website"],
+        version: "1.0.0",
+        endpoints: {
+            health: "/health",
+            llm_bots: "/api/llm-bots",
+            analyze_website: "/api/analyze-website",
+            generate_llms_full: "/api/generate-llms-full",
+            generate_markdown: "/api/generate-markdown",
+            llms_index: "/api/llms-index.json",
+            ai_enrich: "/api/ai-enrich",
+            hierarchical_structure: "/api/hierarchical-structure",
+            analytics: "/api/analytics",
+            webhook_regenerate: "/api/webhook/regenerate",
+        },
+        documentation: "/api-docs",
+        features: {
+            ai_enrichment: !!process.env.GEMINI_API_KEY,
+            automation: process.env.AUTOMATION_ENABLED === "true",
+            analytics: process.env.ANALYTICS_ENABLED === "true",
+        },
     });
 });
 app.use((err, req, res, next) => {
@@ -78,6 +154,19 @@ app.use((req, res) => {
         success: false,
         error: "Endpoint not found",
         path: req.originalUrl,
+        available_endpoints: [
+            "/health",
+            "/api/llm-bots",
+            "/api/analyze-website",
+            "/api/generate-llms-full",
+            "/api/generate-markdown",
+            "/api/llms-index.json",
+            "/api/ai-enrich",
+            "/api/hierarchical-structure",
+            "/api/analytics",
+            "/api/webhook/regenerate",
+        ],
+        documentation: "/api-docs",
     });
 });
 app.listen(PORT, () => {
@@ -85,6 +174,12 @@ app.listen(PORT, () => {
     console.log(`📊 Health check: http://localhost:${PORT}/health`);
     console.log(`🤖 LLM Bots: http://localhost:${PORT}/api/llm-bots`);
     console.log(`🔍 Website Analysis: http://localhost:${PORT}/api/analyze-website`);
+    console.log(`📝 LLMs Full Generation: http://localhost:${PORT}/api/generate-llms-full`);
+    console.log(`📄 Markdown Generation: http://localhost:${PORT}/api/generate-markdown`);
+    console.log(`🔗 LLMs Index: http://localhost:${PORT}/api/llms-index.json`);
+    console.log(`🧠 AI Enrichment: http://localhost:${PORT}/api/ai-enrich`);
+    console.log(`📊 Analytics: http://localhost:${PORT}/api/analytics`);
+    console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
 });
 exports.default = app;
 //# sourceMappingURL=index.js.map

@@ -2,42 +2,150 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const firecrawl_service_1 = require("../services/firecrawl.service");
+const gemini_service_1 = require("../services/gemini.service");
 const types_1 = require("../types");
 const router = (0, express_1.Router)();
-router.post("/analyze-website", async (req, res) => {
-    const startTime = Date.now();
+const activeSessions = new Map();
+router.post("/analyze-website", (_req, res) => {
+    res.status(410).json({
+        success: false,
+        error: "This endpoint has been replaced by GET /api/analyze-website (SSE). Update your client to use the new streaming endpoint.",
+    });
+});
+router.post("/cancel-analysis", (req, res) => {
+    const { sessionId } = req.body;
+    if (!sessionId) {
+        res.status(400).json({ success: false, error: "Session ID required" });
+        return;
+    }
+    const controller = activeSessions.get(sessionId);
+    if (controller) {
+        controller.abort();
+        activeSessions.delete(sessionId);
+        res.json({ success: true, message: "Analysis cancelled" });
+    }
+    else {
+        res.status(404).json({ success: false, error: "Session not found" });
+    }
+});
+router.get("/analyze-website", async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+    const url = req.query.url;
+    const llmBot = req.query.llmBot;
+    const aiEnrichment = req.query.aiEnrichment === "true";
+    const sessionId = req.query.sessionId;
+    const abortController = new AbortController();
+    if (sessionId) {
+        activeSessions.set(sessionId, abortController);
+    }
+    const validationResult = types_1.WebsiteAnalysisRequestSchema.safeParse({
+        url,
+        llmBot,
+        aiEnrichment,
+    });
+    if (!validationResult.success) {
+        res.write(`event: error\ndata: ${JSON.stringify({
+            error: "Invalid request data",
+        })}\n\n`);
+        res.end();
+        if (sessionId)
+            activeSessions.delete(sessionId);
+        return;
+    }
     try {
-        console.log("🚀 Starting website analysis request");
-        console.log("📥 Request body:", {
-            url: req.body.url,
-            llmBot: req.body.llmBot,
-            bodyKeys: Object.keys(req.body),
-        });
-        console.log("🔍 Validating request data...");
-        const validationResult = types_1.WebsiteAnalysisRequestSchema.safeParse(req.body);
-        if (!validationResult.success) {
-            console.error("❌ Request validation failed:", {
-                errors: validationResult.error.errors,
-                receivedData: req.body,
-            });
-            res.status(400).json({
+        res.write(`event: progress\ndata: ${JSON.stringify({
+            progress: 10,
+            message: "Starting extraction...",
+        })}\n\n`);
+        if (abortController.signal.aborted) {
+            res.write(`event: cancelled\ndata: ${JSON.stringify({
+                message: "Analysis cancelled by user",
+            })}\n\n`);
+            res.end();
+            if (sessionId)
+                activeSessions.delete(sessionId);
+            return;
+        }
+        let websiteData;
+        try {
+            websiteData = await firecrawl_service_1.firecrawlService.extractWebsiteData(url);
+        }
+        catch (error) {
+            console.error("❌ Firecrawl extraction failed:", error);
+            res.status(500).json({
                 success: false,
-                error: "Invalid request data",
-                details: validationResult.error.errors,
-                receivedData: req.body,
+                error: "Failed to extract website data from Firecrawl",
+                details: error instanceof Error ? error.message : String(error),
             });
             return;
         }
-        const { url, llmBot } = validationResult.data;
-        console.log("✅ Request validation passed");
-        console.log(`🔍 Analyzing website: ${url} for bot: ${llmBot}`);
-        console.log(`⏱️ Starting extraction at: ${new Date().toISOString()}`);
-        const websiteData = await firecrawl_service_1.firecrawlService.extractWebsiteData(url);
-        const extractionTime = Date.now() - startTime;
-        console.log(`⏱️ Extraction completed in ${extractionTime}ms`);
-        console.log("🔄 Converting paths to UI format...");
+        if (abortController.signal.aborted) {
+            res.write(`event: cancelled\ndata: ${JSON.stringify({
+                message: "Analysis cancelled by user",
+            })}\n\n`);
+            res.end();
+            if (sessionId)
+                activeSessions.delete(sessionId);
+            return;
+        }
+        res.write(`event: progress\ndata: ${JSON.stringify({
+            progress: 40,
+            message: "Website data extracted",
+        })}\n\n`);
         const pathSelections = firecrawl_service_1.firecrawlService.convertToPathSelections(websiteData.paths);
-        console.log(`✅ Converted ${pathSelections.length} paths to UI format`);
+        res.write(`event: progress\ndata: ${JSON.stringify({
+            progress: 60,
+            message: "Paths converted",
+        })}\n\n`);
+        let aiGeneratedContent = [];
+        if (aiEnrichment) {
+            const total = pathSelections.length;
+            let completed = 0;
+            for (const path of pathSelections) {
+                if (abortController.signal.aborted) {
+                    res.write(`event: cancelled\ndata: ${JSON.stringify({
+                        message: "Analysis cancelled by user",
+                    })}\n\n`);
+                    res.end();
+                    if (sessionId)
+                        activeSessions.delete(sessionId);
+                    return;
+                }
+                try {
+                    const meta = websiteData.pageMetadatas?.find((m) => m.path === path.path);
+                    let content = "";
+                    if (meta?.title)
+                        content += `Title: ${meta.title}\n`;
+                    if (meta?.description)
+                        content += `Description: ${meta.description}\n`;
+                    if (meta?.keywords)
+                        content += `Keywords: ${meta.keywords}\n`;
+                    if (!content)
+                        content = `Path: ${path.path}`;
+                    const ai = await gemini_service_1.geminiService.generateAIContent(path.path, content);
+                    if (meta)
+                        meta.summary = ai.summary;
+                    aiGeneratedContent.push(ai);
+                }
+                catch (error) {
+                    console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
+                }
+                completed++;
+                const percent = 60 + Math.round((completed / total) * 35);
+                res.write(`event: progress\ndata: ${JSON.stringify({
+                    progress: percent,
+                    message: `AI enrichment: ${completed}/${total}`,
+                })}\n\n`);
+                await new Promise((resolve) => setTimeout(resolve, 3000));
+            }
+            res.write(`event: progress\ndata: ${JSON.stringify({
+                progress: 95,
+                message: "AI enrichment complete",
+            })}\n\n`);
+        }
         const response = {
             success: true,
             metadata: {
@@ -49,56 +157,65 @@ router.post("/analyze-website", async (req, res) => {
                 uniquePathsFound: websiteData.uniquePathsFound,
             },
             paths: pathSelections,
+            pageMetadatas: websiteData.pageMetadatas,
+            aiGeneratedContent: aiEnrichment ? aiGeneratedContent : undefined,
         };
-        const totalTime = Date.now() - startTime;
-        console.log("✅ Website analysis completed successfully:", {
-            totalTime: `${totalTime}ms`,
-            extractionTime: `${extractionTime}ms`,
-            pathsFound: pathSelections.length,
-            title: websiteData.title,
-            descriptionLength: websiteData.description.length,
-            totalPagesCrawled: websiteData.totalPagesCrawled,
-            totalLinksFound: websiteData.totalLinksFound,
-            uniquePathsFound: websiteData.uniquePathsFound,
-        });
-        res.json(response);
+        res.write(`event: result\ndata: ${JSON.stringify(response)}\n\n`);
+        res.write(`event: progress\ndata: ${JSON.stringify({
+            progress: 100,
+            message: "Analysis complete",
+        })}\n\n`);
+        res.end();
     }
     catch (error) {
-        const totalTime = Date.now() - startTime;
-        console.error("❌ Website analysis failed:", {
+        res.write(`event: error\ndata: ${JSON.stringify({
             error: error instanceof Error ? error.message : "Unknown error",
-            stack: error instanceof Error ? error.stack : undefined,
-            totalTime: `${totalTime}ms`,
-            requestBody: req.body,
-            url: req.body?.url,
-            llmBot: req.body?.llmBot,
-            timestamp: new Date().toISOString(),
-        });
-        if (error instanceof Error) {
-            if (error.message.includes("API key")) {
-                console.error("🔑 API Key Issue - Check environment variables and API key validity");
-            }
-            else if (error.message.includes("rate limit")) {
-                console.error("⏱️ Rate Limit Issue - Consider implementing request throttling");
-            }
-            else if (error.message.includes("timeout")) {
-                console.error("⏰ Timeout Issue - Website might be too large or slow");
-            }
-            else if (error.message.includes("network")) {
-                console.error("🌐 Network Issue - Check internet connection and service availability");
-            }
-            else if (error.message.includes("validation")) {
-                console.error("📝 Validation Issue - Check request format and required fields");
-            }
-        }
-        res.status(500).json({
-            success: false,
-            error: "Failed to analyze website",
-            message: error instanceof Error ? error.message : "Unknown error",
-            timestamp: new Date().toISOString(),
-            requestId: Math.random().toString(36).substring(7),
-        });
+        })}\n\n`);
+        res.end();
+    }
+    finally {
+        if (sessionId)
+            activeSessions.delete(sessionId);
     }
 });
+async function enrichPathsWithAI(paths, pageMetadatas) {
+    const aiContent = [];
+    const batchSize = 3;
+    for (let i = 0; i < paths.length; i += batchSize) {
+        const batch = paths.slice(i, i + batchSize);
+        const batchPromises = batch.map(async (path) => {
+            try {
+                const metadata = pageMetadatas?.find((m) => m.path === path.path);
+                let content = "";
+                if (metadata?.title)
+                    content += `Title: ${metadata.title}\n`;
+                if (metadata?.description)
+                    content += `Description: ${metadata.description}\n`;
+                if (metadata?.keywords)
+                    content += `Keywords: ${metadata.keywords}\n`;
+                if (!content) {
+                    content = `Path: ${path.path}`;
+                }
+                const aiGenerated = await gemini_service_1.geminiService.generateAIContent(path.path, content);
+                path.summary = aiGenerated.summary;
+                path.contextSnippet = aiGenerated.contextSnippet;
+                path.priority = aiGenerated.priority;
+                path.contentType = aiGenerated.contentType;
+                path.aiUsageDirective = aiGenerated.aiUsageDirective;
+                return aiGenerated;
+            }
+            catch (error) {
+                console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
+                return undefined;
+            }
+        });
+        const batchResults = await Promise.all(batchPromises);
+        aiContent.push(...batchResults.filter(Boolean));
+        if (i + batchSize < paths.length) {
+            await new Promise((resolve) => setTimeout(resolve, 5000));
+        }
+    }
+    return aiContent;
+}
 exports.default = router;
 //# sourceMappingURL=website-analysis.js.map
