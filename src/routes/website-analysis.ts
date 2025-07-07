@@ -61,7 +61,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
 
   // Parse query params
   const url = req.query.url as string;
-  const llmBot = req.query.llmBot as string;
+  const bots = (req.query.bots as string)?.split(",").filter(Boolean) || [];
   const aiEnrichment = req.query.aiEnrichment === "true";
   const sessionId = req.query.sessionId as string;
 
@@ -74,7 +74,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
   // Validate
   const validationResult = WebsiteAnalysisRequestSchema.safeParse({
     url,
-    llmBot,
+    bots,
     aiEnrichment,
   });
   if (!validationResult.success) {

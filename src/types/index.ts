@@ -101,7 +101,7 @@ export interface AnalyticsData {
 // Additional types for API requests and responses
 export interface WebsiteAnalysisRequest {
   url: string;
-  llmBot: LLMBot;
+  bots: LLMBot[];
   aiEnrichment?: boolean;
 }
 
@@ -167,14 +167,18 @@ export interface AnalyticsResponse {
 // Zod schemas for validation
 export const WebsiteAnalysisRequestSchema = z.object({
   url: z.string().url("Invalid URL format"),
-  llmBot: z.enum([
-    "ChatGPT-User",
-    "GPTBot",
-    "GoogleExtended",
-    "Claude",
-    "Anthropic",
-    "CCBot",
-  ]),
+  bots: z
+    .array(
+      z.enum([
+        "ChatGPT-User",
+        "GPTBot",
+        "GoogleExtended",
+        "Claude",
+        "Anthropic",
+        "CCBot",
+      ])
+    )
+    .min(1, "At least one bot must be selected"),
   aiEnrichment: z.boolean().optional(),
 });
 
