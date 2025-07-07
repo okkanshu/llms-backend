@@ -77,7 +77,7 @@ export interface AnalyticsData {
 }
 export interface WebsiteAnalysisRequest {
     url: string;
-    llmBot: LLMBot;
+    bots: LLMBot[];
     aiEnrichment?: boolean;
 }
 export interface WebsiteAnalysisResponse {
@@ -136,15 +136,15 @@ export interface AnalyticsResponse {
 }
 export declare const WebsiteAnalysisRequestSchema: z.ZodObject<{
     url: z.ZodString;
-    llmBot: z.ZodEnum<["ChatGPT-User", "GPTBot", "GoogleExtended", "Claude", "Anthropic", "CCBot"]>;
+    bots: z.ZodArray<z.ZodEnum<["ChatGPT-User", "GPTBot", "GoogleExtended", "Claude", "Anthropic", "CCBot"]>, "many">;
     aiEnrichment: z.ZodOptional<z.ZodBoolean>;
 }, "strip", z.ZodTypeAny, {
     url: string;
-    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
+    bots: ("ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot")[];
     aiEnrichment?: boolean | undefined;
 }, {
     url: string;
-    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
+    bots: ("ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot")[];
     aiEnrichment?: boolean | undefined;
 }>;
 export declare const LLMsTxtPayloadSchema: z.ZodObject<{
@@ -243,20 +243,20 @@ export declare const AutomationConfigSchema: z.ZodObject<{
     generateMarkdown: z.ZodBoolean;
     webhookUrl: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
     websiteUrl: string;
     generateFull: boolean;
     generateMarkdown: boolean;
     enabled: boolean;
     schedule: string;
+    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
     webhookUrl?: string | undefined;
 }, {
-    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
     websiteUrl: string;
     generateFull: boolean;
     generateMarkdown: boolean;
     enabled: boolean;
     schedule: string;
+    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
     webhookUrl?: string | undefined;
 }>;
 export interface LLMBotConfig {

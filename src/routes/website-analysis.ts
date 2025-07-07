@@ -110,16 +110,25 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     }
 
     let websiteData;
+    // Heartbeat progress during crawling
+    let crawlProgress = 15;
+    let crawlHeartbeat;
+    const sendCrawlHeartbeat = () => {
+      if (crawlProgress < 40) {
+        res.write(
+          `event: progress\ndata: ${JSON.stringify({
+            progress: crawlProgress,
+            message: `Crawling website...`,
+          })}\n\n`
+        );
+        crawlProgress += 5;
+      }
+    };
+    crawlHeartbeat = setInterval(sendCrawlHeartbeat, 5000);
     try {
       websiteData = await firecrawlService.extractWebsiteData(url);
-    } catch (error) {
-      console.error("❌ Firecrawl extraction failed:", error);
-      res.status(500).json({
-        success: false,
-        error: "Failed to extract website data from Firecrawl",
-        details: error instanceof Error ? error.message : String(error),
-      });
-      return;
+    } finally {
+      clearInterval(crawlHeartbeat);
     }
 
     // Check for cancellation

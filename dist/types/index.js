@@ -4,14 +4,16 @@ exports.LLM_BOT_CONFIGS = exports.AutomationConfigSchema = exports.PathSelection
 const zod_1 = require("zod");
 exports.WebsiteAnalysisRequestSchema = zod_1.z.object({
     url: zod_1.z.string().url("Invalid URL format"),
-    llmBot: zod_1.z.enum([
+    bots: zod_1.z
+        .array(zod_1.z.enum([
         "ChatGPT-User",
         "GPTBot",
         "GoogleExtended",
         "Claude",
         "Anthropic",
         "CCBot",
-    ]),
+    ]))
+        .min(1, "At least one bot must be selected"),
     aiEnrichment: zod_1.z.boolean().optional(),
 });
 exports.LLMsTxtPayloadSchema = zod_1.z.object({

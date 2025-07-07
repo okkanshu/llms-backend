@@ -34,7 +34,7 @@ router.get("/analyze-website", async (req, res) => {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
     const url = req.query.url;
-    const llmBot = req.query.llmBot;
+    const bots = req.query.bots?.split(",").filter(Boolean) || [];
     const aiEnrichment = req.query.aiEnrichment === "true";
     const sessionId = req.query.sessionId;
     const abortController = new AbortController();
@@ -43,7 +43,7 @@ router.get("/analyze-website", async (req, res) => {
     }
     const validationResult = types_1.WebsiteAnalysisRequestSchema.safeParse({
         url,
-        llmBot,
+        bots,
         aiEnrichment,
     });
     if (!validationResult.success) {
@@ -70,17 +70,23 @@ router.get("/analyze-website", async (req, res) => {
             return;
         }
         let websiteData;
+        let crawlProgress = 15;
+        let crawlHeartbeat;
+        const sendCrawlHeartbeat = () => {
+            if (crawlProgress < 40) {
+                res.write(`event: progress\ndata: ${JSON.stringify({
+                    progress: crawlProgress,
+                    message: `Crawling website...`,
+                })}\n\n`);
+                crawlProgress += 5;
+            }
+        };
+        crawlHeartbeat = setInterval(sendCrawlHeartbeat, 5000);
         try {
             websiteData = await firecrawl_service_1.firecrawlService.extractWebsiteData(url);
         }
-        catch (error) {
-            console.error("❌ Firecrawl extraction failed:", error);
-            res.status(500).json({
-                success: false,
-                error: "Failed to extract website data from Firecrawl",
-                details: error instanceof Error ? error.message : String(error),
-            });
-            return;
+        finally {
+            clearInterval(crawlHeartbeat);
         }
         if (abortController.signal.aborted) {
             res.write(`event: cancelled\ndata: ${JSON.stringify({
