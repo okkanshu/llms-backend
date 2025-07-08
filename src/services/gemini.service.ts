@@ -5,7 +5,7 @@ dotenv.config();
 
 const OPENROUTER_API_KEY =
   process.env.OPENROUTER_API_KEY ||
-  "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";
+  "";
 const OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
