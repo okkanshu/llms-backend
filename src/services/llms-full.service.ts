@@ -1,6 +1,6 @@
 import FirecrawlApp from "@mendable/firecrawl-js";
 import { LLMsFullPayload, LLMsFullGenerationResponse } from "../types";
-import { geminiService } from "./gemini.service";
+import { openRouterService } from "./gemini.service";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -226,7 +226,7 @@ export class LLMsFullService {
     let summary = (page as any).summary;
     if (options.aiEnrichment && !summary) {
       try {
-        const aiContent = await geminiService.generateAIContent(
+        const aiContent = await openRouterService.generateAIContent(
           page.path,
           page.content
         );
@@ -239,7 +239,7 @@ export class LLMsFullService {
     // Add AI enrichment if enabled
     if (options.aiEnrichment) {
       try {
-        const aiContent = await geminiService.generateAIContent(
+        const aiContent = await openRouterService.generateAIContent(
           page.path,
           page.content
         );

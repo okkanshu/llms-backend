@@ -1,100 +1,72 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
-import { AIGeneratedContent, EnhancedMetadata } from "../types";
 import dotenv from "dotenv";
+import { AIGeneratedContent, EnhancedMetadata } from "../types";
 
 dotenv.config();
 
-export class GeminiService {
-  private genAI: GoogleGenerativeAI;
-  private model: any;
-  private apiKey: string;
-  private lastRequestTime: number = 0;
-  private minRequestInterval: number = 8000; // 7 seconds between requests
+const OPENROUTER_API_KEY =
+  process.env.OPENROUTER_API_KEY ||
+  "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";
+const OPENROUTER_MODEL =
+  process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free";
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-  constructor() {
-    this.apiKey = process.env.GEMINI_API_KEY || "";
-    if (!this.apiKey) {
-      console.warn("⚠️ GEMINI_API_KEY not found in environment variables");
-    }
+if (!OPENROUTER_API_KEY) {
+  console.warn("⚠️ OPENROUTER_API_KEY not found in environment variables");
+}
 
-    this.genAI = new GoogleGenerativeAI(this.apiKey);
-    this.model = this.genAI.getGenerativeModel({
-      model: "gemini-2.0-flash-exp",
-    });
+async function callOpenRouter(
+  messages: any[],
+  temperature = 0.7,
+  maxTokens = 256
+): Promise<string> {
+  const response = await fetch(OPENROUTER_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: OPENROUTER_MODEL,
+      messages,
+      temperature,
+      max_tokens: maxTokens,
+    }),
+  });
+
+  if (response.status === 429) {
+    // Rate limit hit
+    const errorText = await response.text();
+    throw new Error("RATE_LIMIT_REACHED: " + errorText);
   }
 
-  /**
-   * Wait for minimum interval between requests
-   */
-  private async waitForRateLimit(): Promise<void> {
-    const now = Date.now();
-    const timeSinceLastRequest = now - this.lastRequestTime;
-
-    if (timeSinceLastRequest < this.minRequestInterval) {
-      const waitTime = this.minRequestInterval - timeSinceLastRequest;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
-    }
-
-    this.lastRequestTime = Date.now();
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
   }
 
-  /**
-   * Retry function with exponential backoff
-   */
-  private async retryWithBackoff<T>(
-    fn: () => Promise<T>,
-    maxRetries: number = 3,
-    baseDelay: number = 8000
-  ): Promise<T> {
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        await this.waitForRateLimit();
-        return await fn();
-      } catch (error: any) {
-        if (attempt === maxRetries) {
-          throw error;
-        }
+  const data = (await response.json()) as {
+    choices?: { message?: { content?: string } }[];
+  };
+  return data.choices?.[0]?.message?.content?.trim() || "";
+}
 
-        // Check if it's a rate limit error
-        if (error.status === 429 || error.message?.includes("429")) {
-          const delay = baseDelay;
-          console.warn(
-            `⚠️ Rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/${
-              maxRetries + 1
-            })`
-          );
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-
-        // For other errors, don't retry
-        throw error;
-      }
-    }
-    throw new Error("Max retries exceeded");
-  }
-
+export class OpenRouterService {
   /**
    * Generate a summary for a specific path
    */
   async generatePathSummary(path: string, content: string): Promise<string> {
-    if (!this.apiKey) {
-      return "Summary not available (AI service not configured)";
-    }
-
+    const prompt = `Generate a concise 1-2 sentence summary for this webpage content. Focus on the main purpose and key information.\n\nPath: ${path}\nContent: ${content.substring(
+      0,
+      2000
+    )}...\n\nSummary:`;
     try {
-      const prompt = `Generate a concise 1-2 sentence summary for this webpage content. Focus on the main purpose and key information.
-
-Path: ${path}
-Content: ${content.substring(0, 2000)}...
-
-Summary:`;
-
-      return await this.retryWithBackoff(async () => {
-        const result = await this.model.generateContent(prompt);
-        const response = await result.response;
-        return response.text().trim();
-      });
+      return await callOpenRouter([
+        {
+          role: "system",
+          content: "You are a helpful assistant for website content analysis.",
+        },
+        { role: "user", content: prompt },
+      ]);
     } catch (error) {
       console.error("Error generating path summary:", error);
       return "Summary generation failed";
@@ -105,23 +77,18 @@ Summary:`;
    * Generate context snippet for a path
    */
   async generateContextSnippet(path: string, content: string): Promise<string> {
-    if (!this.apiKey) {
-      return "Context snippet not available (AI service not configured)";
-    }
-
+    const prompt = `Generate a brief context snippet (2-3 sentences) that describes what this page is about and its key value proposition.\n\nPath: ${path}\nContent: ${content.substring(
+      0,
+      2000
+    )}...\n\nContext Snippet:`;
     try {
-      const prompt = `Generate a brief context snippet (2-3 sentences) that describes what this page is about and its key value proposition.
-
-Path: ${path}
-Content: ${content.substring(0, 2000)}...
-
-Context Snippet:`;
-
-      return await this.retryWithBackoff(async () => {
-        const result = await this.model.generateContent(prompt);
-        const response = await result.response;
-        return response.text().trim();
-      });
+      return await callOpenRouter([
+        {
+          role: "system",
+          content: "You are a helpful assistant for website content analysis.",
+        },
+        { role: "user", content: prompt },
+      ]);
     } catch (error) {
       console.error("Error generating context snippet:", error);
       return "Context snippet generation failed";
@@ -132,27 +99,22 @@ Context Snippet:`;
    * Extract keywords from content
    */
   async extractKeywords(content: string): Promise<string[]> {
-    if (!this.apiKey) {
-      return [];
-    }
-
+    const prompt = `Extract 5-10 relevant keywords from this content. Return only the keywords as a comma-separated list.\n\nContent: ${content.substring(
+      0,
+      2000
+    )}...\n\nKeywords:`;
     try {
-      const prompt = `Extract 5-10 relevant keywords from this content. Return only the keywords as a comma-separated list.
-
-Content: ${content.substring(0, 2000)}...
-
-Keywords:`;
-
-      return await this.retryWithBackoff(async () => {
-        const result = await this.model.generateContent(prompt);
-        const response = await result.response;
-        const keywords = response
-          .text()
-          .trim()
-          .split(",")
-          .map((k: string) => k.trim());
-        return keywords.filter((k: string) => k.length > 0);
-      });
+      const result = await callOpenRouter([
+        {
+          role: "system",
+          content: "You are a helpful assistant for website content analysis.",
+        },
+        { role: "user", content: prompt },
+      ]);
+      return result
+        .split(",")
+        .map((k) => k.trim())
+        .filter(Boolean);
     } catch (error) {
       console.error("Error extracting keywords:", error);
       return [];
@@ -163,34 +125,28 @@ Keywords:`;
    * Determine content type
    */
   async determineContentType(path: string, content: string): Promise<string> {
-    if (!this.apiKey) {
-      return "page";
-    }
-
+    const prompt = `Based on the path and content, determine the content type. Choose from: page, blog, docs, project, archive, terms.\n\nPath: ${path}\nContent: ${content.substring(
+      0,
+      1000
+    )}...\n\nContent Type:`;
     try {
-      const prompt = `Based on the path and content, determine the content type. Choose from: page, blog, docs, project, archive, terms.
-
-Path: ${path}
-Content: ${content.substring(0, 1000)}...
-
-Content Type:`;
-
-      return await this.retryWithBackoff(async () => {
-        const result = await this.model.generateContent(prompt);
-        const response = await result.response;
-        const contentType = response.text().trim().toLowerCase();
-
-        // Validate against allowed types
-        const allowedTypes = [
-          "page",
-          "blog",
-          "docs",
-          "project",
-          "archive",
-          "terms",
-        ];
-        return allowedTypes.includes(contentType) ? contentType : "page";
-      });
+      const result = await callOpenRouter([
+        {
+          role: "system",
+          content: "You are a helpful assistant for website content analysis.",
+        },
+        { role: "user", content: prompt },
+      ]);
+      const allowedTypes = [
+        "page",
+        "blog",
+        "docs",
+        "project",
+        "archive",
+        "terms",
+      ];
+      const type = result.toLowerCase();
+      return allowedTypes.includes(type) ? type : "page";
     } catch (error) {
       console.error("Error determining content type:", error);
       return "page";
@@ -204,35 +160,21 @@ Content Type:`;
     path: string,
     content: string
   ): Promise<"high" | "medium" | "low"> {
-    if (!this.apiKey) {
-      return "medium";
-    }
-
+    const prompt = `Based on the path and content, determine the priority level for AI crawling. Consider factors like:\n- High: Main pages, important content, frequently accessed\n- Medium: Regular content pages\n- Low: Archive, terms, less important pages\n\nPath: ${path}\nContent: ${content.substring(
+      0,
+      1000
+    )}...\n\nPriority (high/medium/low):`;
     try {
-      const prompt = `Based on the path and content, determine the priority level for AI crawling. Consider factors like:
-- High: Main pages, important content, frequently accessed
-- Medium: Regular content pages
-- Low: Archive, terms, less important pages
-
-Path: ${path}
-Content: ${content.substring(0, 1000)}...
-
-Priority (high/medium/low):`;
-
-      return await this.retryWithBackoff(async () => {
-        const result = await this.model.generateContent(prompt);
-        const response = await result.response;
-        const priority = response.text().trim().toLowerCase();
-
-        if (
-          priority === "high" ||
-          priority === "medium" ||
-          priority === "low"
-        ) {
-          return priority;
-        }
-        return "medium";
-      });
+      const result = await callOpenRouter([
+        {
+          role: "system",
+          content: "You are a helpful assistant for website content analysis.",
+        },
+        { role: "user", content: prompt },
+      ]);
+      const value = result.toLowerCase();
+      if (["high", "medium", "low"].includes(value)) return value as any;
+      return "medium";
     } catch (error) {
       console.error("Error determining priority:", error);
       return "medium";
@@ -246,37 +188,21 @@ Priority (high/medium/low):`;
     path: string,
     content: string
   ): Promise<"allow" | "citation-only" | "no-fine-tuning" | "disallow"> {
-    if (!this.apiKey) {
-      return "allow";
-    }
-
+    const prompt = `Based on the path and content, suggest an AI usage directive:\n- allow: Standard content that can be freely used\n- citation-only: Content that should only be used for citations\n- no-fine-tuning: Content that can be used but not for training\n- disallow: Content that should not be used by AI\n\nPath: ${path}\nContent: ${content.substring(
+      0,
+      1000
+    )}...\n\nDirective:`;
     try {
-      const prompt = `Based on the path and content, suggest an AI usage directive:
-- allow: Standard content that can be freely used
-- citation-only: Content that should only be used for citations
-- no-fine-tuning: Content that can be used but not for training
-- disallow: Content that should not be used by AI
-
-Path: ${path}
-Content: ${content.substring(0, 1000)}...
-
-Directive:`;
-
-      return await this.retryWithBackoff(async () => {
-        const result = await this.model.generateContent(prompt);
-        const response = await result.response;
-        const directive = response.text().trim().toLowerCase();
-
-        const allowedDirectives = [
-          "allow",
-          "citation-only",
-          "no-fine-tuning",
-          "disallow",
-        ];
-        return allowedDirectives.includes(directive)
-          ? (directive as any)
-          : "allow";
-      });
+      const result = await callOpenRouter([
+        {
+          role: "system",
+          content: "You are a helpful assistant for website content analysis.",
+        },
+        { role: "user", content: prompt },
+      ]);
+      const allowed = ["allow", "citation-only", "no-fine-tuning", "disallow"];
+      const value = result.toLowerCase();
+      return allowed.includes(value) ? (value as any) : "allow";
     } catch (error) {
       console.error("Error suggesting AI usage directive:", error);
       return "allow";
@@ -316,11 +242,10 @@ Directive:`;
         priority,
         aiUsageDirective,
         generatedAt: new Date().toISOString(),
-        model: "gemini-2.0-flash-exp",
+        model: OPENROUTER_MODEL,
       };
     } catch (error) {
       console.error("Error generating AI content:", error);
-      // Return fallback content instead of throwing
       return {
         path,
         summary: "AI analysis failed",
@@ -330,7 +255,7 @@ Directive:`;
         priority: "medium",
         aiUsageDirective: "allow",
         generatedAt: new Date().toISOString(),
-        model: "gemini-2.0-flash-exp",
+        model: OPENROUTER_MODEL,
       };
     }
   }
@@ -343,23 +268,35 @@ Directive:`;
     description: string,
     content: string
   ): Promise<EnhancedMetadata> {
-    const [keywords, contentType, priority, aiUsageDirective] =
-      await Promise.all([
-        this.extractKeywords(content),
-        this.determineContentType("", content),
-        this.determinePriority("", content),
-        this.suggestAIUsageDirective("", content),
-      ]);
-
-    return {
-      title,
-      description,
-      keywords,
-      contentType,
-      priority,
-      aiUsageDirective,
-      lastModified: new Date().toISOString(),
-    };
+    try {
+      const [keywords, contentType, priority, aiUsageDirective] =
+        await Promise.all([
+          this.extractKeywords(content),
+          this.determineContentType("", content),
+          this.determinePriority("", content),
+          this.suggestAIUsageDirective("", content),
+        ]);
+      return {
+        title,
+        description,
+        keywords,
+        contentType,
+        priority,
+        aiUsageDirective,
+        lastModified: new Date().toISOString(),
+      };
+    } catch (error) {
+      console.error("Error enriching metadata:", error);
+      return {
+        title,
+        description,
+        keywords: [],
+        contentType: "page",
+        priority: "medium",
+        aiUsageDirective: "allow",
+        lastModified: new Date().toISOString(),
+      };
+    }
   }
 
   /**
@@ -372,27 +309,24 @@ Directive:`;
       description: string;
     }>
   > {
-    if (!this.apiKey) {
+    if (!OPENROUTER_API_KEY) {
       return [];
     }
 
     try {
-      const prompt = `Group these website paths into logical hierarchical sections. For each group, provide a name and description.
+      const prompt = `Group these website paths into logical hierarchical sections. For each group, provide a name and description.\n\nPaths: ${paths.join(
+        "\n"
+      )}\n\nReturn as JSON array with format:\n[\n  {\n    "group": "Main Pages",\n    "paths": ["/", "/about", "/contact"],\n    "description": "Primary navigation pages"\n  }\n]`;
 
-Paths: ${paths.join("\n")}
+      const result = await callOpenRouter([
+        {
+          role: "system",
+          content: "You are a helpful assistant for website content analysis.",
+        },
+        { role: "user", content: prompt },
+      ]);
 
-Return as JSON array with format:
-[
-  {
-    "group": "Main Pages",
-    "paths": ["/", "/about", "/contact"],
-    "description": "Primary navigation pages"
-  }
-]`;
-
-      const result = await this.model.generateContent(prompt);
-      const response = await result.response;
-      const jsonMatch = response.text().match(/\[[\s\S]*\]/);
+      const jsonMatch = result.match(/\[[\s\S]*\]/);
 
       if (jsonMatch) {
         return JSON.parse(jsonMatch[0]);
@@ -405,4 +339,4 @@ Return as JSON array with format:
   }
 }
 
-export const geminiService = new GeminiService();
+export const openRouterService = new OpenRouterService();

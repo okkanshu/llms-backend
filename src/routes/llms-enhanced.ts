@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { llmsFullService } from "../services/llms-full.service";
 import { markdownGeneratorService } from "../services/markdown-generator.service";
-import { geminiService } from "../services/gemini.service";
+import { openRouterService } from "../services/gemini.service";
 import {
   LLMsFullPayloadSchema,
   LLMsFullGenerationResponse,
@@ -198,7 +198,7 @@ router.post("/ai-enrich", async (req: Request, res: Response) => {
     }
 
     // Generate AI content
-    const aiContent = await geminiService.generateAIContent(path, content);
+    const aiContent = await openRouterService.generateAIContent(path, content);
 
     res.json({
       success: true,
@@ -232,7 +232,7 @@ router.post("/hierarchical-structure", async (req: Request, res: Response) => {
     }
 
     // Generate hierarchical structure
-    const structure = await geminiService.generateHierarchicalStructure(paths);
+    const structure = await openRouterService.generateHierarchicalStructure(paths);
 
     res.json({
       success: true,

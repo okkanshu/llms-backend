@@ -1,6 +1,6 @@
 import { Router, Request, Response, RequestHandler } from "express";
 import { firecrawlService } from "../services/firecrawl.service";
-import { geminiService } from "../services/gemini.service";
+import { openRouterService } from "../services/gemini.service";
 import {
   WebsiteAnalysisRequestSchema,
   WebsiteAnalysisResponse,
@@ -159,8 +159,8 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     if (aiEnrichment) {
       const total = pathSelections.length;
       let completed = 0;
+      let rateLimitHit = false;
       for (const path of pathSelections) {
-        // Check for cancellation before each AI call
         if (abortController.signal.aborted) {
           res.write(
             `event: cancelled\ndata: ${JSON.stringify({
@@ -173,11 +173,9 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
         }
 
         try {
-          // Find corresponding metadata
           const meta = websiteData.pageMetadatas?.find(
             (m) => m.path === path.path
           );
-          // Compose content for summary
           let content = "";
           if (meta?.title) content += `Title: ${meta.title}\n`;
           if (meta?.description)
@@ -186,14 +184,37 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
           if (!content) content = `Path: ${path.path}`;
 
           // AI enrichment (summary)
-          const ai = await geminiService.generateAIContent(path.path, content);
-
-          // Add summary to metadata (even if AI failed, we'll have fallback content)
-          if (meta) (meta as any).summary = ai.summary;
-          aiGeneratedContent.push(ai);
+          let ai;
+          try {
+            ai = await openRouterService.generateAIContent(path.path, content);
+          } catch (error) {
+            if (
+              error instanceof Error &&
+              error.message &&
+              error.message.startsWith("RATE_LIMIT_REACHED:")
+            ) {
+              res.write(
+                `event: error\ndata: ${JSON.stringify({
+                  error:
+                    "AI rate limit reached. Please try again in a few minutes.",
+                  details: error.message,
+                })}\n\n`
+              );
+              rateLimitHit = true;
+              break;
+            } else {
+              console.warn(
+                `⚠️ AI enrichment failed for path ${path.path}:`,
+                error
+              );
+              // Continue to next path
+              continue;
+            }
+          }
+          if (meta && ai) (meta as any).summary = ai.summary;
+          if (ai) aiGeneratedContent.push(ai);
         } catch (error) {
-          console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
-          // Skip Gemini for this path, do not push fallback, just continue
+          // Already handled above
         }
 
         completed++;
@@ -205,15 +226,17 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
           })}\n\n`
         );
 
-        // Add delay (3s) - reduced from 1.5s to be more reasonable
-        await new Promise((resolve) => setTimeout(resolve, 3000));
+        // Add delay (5s)
+        await new Promise((resolve) => setTimeout(resolve, 5000));
       }
-      res.write(
-        `event: progress\ndata: ${JSON.stringify({
-          progress: 99.5,
-          message: "AI enrichment complete",
-        })}\n\n`
-      );
+      if (!rateLimitHit) {
+        res.write(
+          `event: progress\ndata: ${JSON.stringify({
+            progress: 99.5,
+            message: "AI enrichment complete",
+          })}\n\n`
+        );
+      }
     }
 
     // Step 4: Done
@@ -285,7 +308,7 @@ async function enrichPathsWithAI(
           content = `Path: ${path.path}`;
         }
 
-        const aiGenerated = await geminiService.generateAIContent(
+        const aiGenerated = await openRouterService.generateAIContent(
           path.path,
           content
         );

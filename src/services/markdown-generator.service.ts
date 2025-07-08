@@ -1,6 +1,6 @@
 import FirecrawlApp from "@mendable/firecrawl-js";
 import { MarkdownGenerationResponse } from "../types";
-import { geminiService } from "./gemini.service";
+import { openRouterService } from "./gemini.service";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -330,7 +330,7 @@ export class MarkdownGeneratorService {
     let summary = (page as any).summary;
     if (!summary) {
       try {
-        summary = await geminiService.generatePathSummary(
+        summary = await openRouterService.generatePathSummary(
           page.path,
           page.content
         );
