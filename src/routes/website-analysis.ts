@@ -13,13 +13,6 @@ const router = Router();
 // Store active analysis sessions for cancellation
 const activeSessions = new Map<string, AbortController>();
 
-/**
- * POST /api/analyze-website
- * Analyze a website and extract metadata and paths with optional AI enrichment
- */
-// NOTE: The previous POST /api/analyze-website endpoint has been merged into the
-// unified SSE endpoint below to avoid double crawls. If an old client calls the
-// POST route we simply inform that it has been deprecated.
 router.post("/analyze-website", (_req: Request, res: Response) => {
   res.status(410).json({
     success: false,
@@ -92,7 +85,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     // Step 1: Extract website data
     res.write(
       `event: progress\ndata: ${JSON.stringify({
-        progress: 10,
+        progress: 1,
         message: "Starting extraction...",
       })}\n\n`
     );
@@ -110,21 +103,21 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     }
 
     let websiteData;
-    // Heartbeat progress during crawling
-    let crawlProgress = 15;
+    // Heartbeat progress during crawling - now goes from 5 to 99
+    let crawlProgress = 5;
     let crawlHeartbeat;
     const sendCrawlHeartbeat = () => {
-      if (crawlProgress < 40) {
+      if (crawlProgress < 99) {
         res.write(
           `event: progress\ndata: ${JSON.stringify({
             progress: crawlProgress,
             message: `Crawling website...`,
           })}\n\n`
         );
-        crawlProgress += 5;
+        crawlProgress += 3; // Smaller increments for smoother progress
       }
     };
-    crawlHeartbeat = setInterval(sendCrawlHeartbeat, 5000);
+    crawlHeartbeat = setInterval(sendCrawlHeartbeat, 3000); // More frequent updates
     try {
       websiteData = await firecrawlService.extractWebsiteData(url);
     } finally {
@@ -145,7 +138,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
 
     res.write(
       `event: progress\ndata: ${JSON.stringify({
-        progress: 40,
+        progress: 99,
         message: "Website data extracted",
       })}\n\n`
     );
@@ -204,7 +197,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
         }
 
         completed++;
-        const percent = 60 + Math.round((completed / total) * 35); // 60-95%
+        const percent = 99 + Math.round((completed / total) * 0.5); // 99-99.5% (only 0.5% for AI)
         res.write(
           `event: progress\ndata: ${JSON.stringify({
             progress: percent,
@@ -217,7 +210,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
       }
       res.write(
         `event: progress\ndata: ${JSON.stringify({
-          progress: 95,
+          progress: 99.5,
           message: "AI enrichment complete",
         })}\n\n`
       );
@@ -261,9 +254,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
   }
 });
 
-/**
- * Helper function to enrich paths with AI-generated content
- */
+// Helper function to enrich paths with AI-generated content
 async function enrichPathsWithAI(
   paths: PathSelection[],
   pageMetadatas?: Array<{
@@ -275,8 +266,7 @@ async function enrichPathsWithAI(
 ): Promise<AIGeneratedContent[]> {
   const aiContent: AIGeneratedContent[] = [];
 
-  // Process paths in batches to avoid overwhelming the AI service
-  const batchSize = 3; // Reduced batch size
+  const batchSize = 3;
   for (let i = 0; i < paths.length; i += batchSize) {
     const batch = paths.slice(i, i + batchSize);
 
@@ -285,25 +275,21 @@ async function enrichPathsWithAI(
         // Find corresponding metadata
         const metadata = pageMetadatas?.find((m) => m.path === path.path);
 
-        // Create content string from available metadata
         let content = "";
         if (metadata?.title) content += `Title: ${metadata.title}\n`;
         if (metadata?.description)
           content += `Description: ${metadata.description}\n`;
         if (metadata?.keywords) content += `Keywords: ${metadata.keywords}\n`;
 
-        // If no metadata, use path as content
         if (!content) {
           content = `Path: ${path.path}`;
         }
 
-        // Generate AI content
         const aiGenerated = await geminiService.generateAIContent(
           path.path,
           content
         );
 
-        // Update the path with AI-generated content
         path.summary = aiGenerated.summary;
         path.contextSnippet = aiGenerated.contextSnippet;
         path.priority = aiGenerated.priority;
@@ -313,7 +299,6 @@ async function enrichPathsWithAI(
         return aiGenerated;
       } catch (error) {
         console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
-        // Skip Gemini for this path, do not push fallback, just continue
         return undefined;
       }
     });
@@ -321,7 +306,6 @@ async function enrichPathsWithAI(
     const batchResults = await Promise.all(batchPromises);
     aiContent.push(...(batchResults.filter(Boolean) as AIGeneratedContent[]));
 
-    // Longer delay between batches to be respectful to the AI service
     if (i + batchSize < paths.length) {
       await new Promise((resolve) => setTimeout(resolve, 5000)); // 5 seconds
     }
