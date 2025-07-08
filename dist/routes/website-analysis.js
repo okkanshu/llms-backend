@@ -57,7 +57,7 @@ router.get("/analyze-website", async (req, res) => {
     }
     try {
         res.write(`event: progress\ndata: ${JSON.stringify({
-            progress: 10,
+            progress: 1,
             message: "Starting extraction...",
         })}\n\n`);
         if (abortController.signal.aborted) {
@@ -70,18 +70,18 @@ router.get("/analyze-website", async (req, res) => {
             return;
         }
         let websiteData;
-        let crawlProgress = 15;
+        let crawlProgress = 5;
         let crawlHeartbeat;
         const sendCrawlHeartbeat = () => {
-            if (crawlProgress < 40) {
+            if (crawlProgress < 99) {
                 res.write(`event: progress\ndata: ${JSON.stringify({
                     progress: crawlProgress,
                     message: `Crawling website...`,
                 })}\n\n`);
-                crawlProgress += 5;
+                crawlProgress += 3;
             }
         };
-        crawlHeartbeat = setInterval(sendCrawlHeartbeat, 5000);
+        crawlHeartbeat = setInterval(sendCrawlHeartbeat, 3000);
         try {
             websiteData = await firecrawl_service_1.firecrawlService.extractWebsiteData(url);
         }
@@ -98,7 +98,7 @@ router.get("/analyze-website", async (req, res) => {
             return;
         }
         res.write(`event: progress\ndata: ${JSON.stringify({
-            progress: 40,
+            progress: 99,
             message: "Website data extracted",
         })}\n\n`);
         const pathSelections = firecrawl_service_1.firecrawlService.convertToPathSelections(websiteData.paths);
@@ -140,7 +140,7 @@ router.get("/analyze-website", async (req, res) => {
                     console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
                 }
                 completed++;
-                const percent = 60 + Math.round((completed / total) * 35);
+                const percent = 99 + Math.round((completed / total) * 0.5);
                 res.write(`event: progress\ndata: ${JSON.stringify({
                     progress: percent,
                     message: `AI enrichment: ${completed}/${total}`,
@@ -148,7 +148,7 @@ router.get("/analyze-website", async (req, res) => {
                 await new Promise((resolve) => setTimeout(resolve, 3000));
             }
             res.write(`event: progress\ndata: ${JSON.stringify({
-                progress: 95,
+                progress: 99.5,
                 message: "AI enrichment complete",
             })}\n\n`);
         }
