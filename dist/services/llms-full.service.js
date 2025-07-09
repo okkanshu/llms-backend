@@ -138,7 +138,7 @@ class LLMsFullService {
         let summary = page.summary;
         if (options.aiEnrichment && !summary) {
             try {
-                const aiContent = await gemini_service_1.geminiService.generateAIContent(page.path, page.content);
+                const aiContent = await gemini_service_1.openRouterService.generateAIContent(page.path, page.content);
                 summary = aiContent.summary;
             }
             catch { }
@@ -148,7 +148,7 @@ class LLMsFullService {
         content += `\n`;
         if (options.aiEnrichment) {
             try {
-                const aiContent = await gemini_service_1.geminiService.generateAIContent(page.path, page.content);
+                const aiContent = await gemini_service_1.openRouterService.generateAIContent(page.path, page.content);
                 content += `## AI Analysis\n`;
                 if (aiContent.summary) {
                     content += `**Summary:** ${aiContent.summary}\n\n`;

@@ -3,9 +3,15 @@ import { AIGeneratedContent, EnhancedMetadata } from "../types";
 
 dotenv.config();
 
-const OPENROUTER_API_KEY =
-  process.env.OPENROUTER_API_KEY ||
-  "";
+// Debug: Log the loaded API key (masking most of it for security)
+console.log(
+  "🔑 Loaded OPENROUTER_API_KEY:",
+  process.env.OPENROUTER_API_KEY
+    ? process.env.OPENROUTER_API_KEY.slice(0, 8) + "..."
+    : undefined
+);
+
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
 const OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free";
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -17,8 +23,13 @@ if (!OPENROUTER_API_KEY) {
 async function callOpenRouter(
   messages: any[],
   temperature = 0.7,
-  maxTokens = 256
+  maxTokens = 1024
 ): Promise<string> {
+  // Debug: Log the Authorization header before making the request
+  console.log(
+    "📡 Sending auth header:",
+    `Bearer ${OPENROUTER_API_KEY ? OPENROUTER_API_KEY.slice(0, 8) + "..." : ""}`
+  );
   const response = await fetch(OPENROUTER_API_URL, {
     method: "POST",
     headers: {
@@ -36,108 +47,108 @@ async function callOpenRouter(
   if (response.status === 429) {
     // Rate limit hit
     const errorText = await response.text();
+    console.error("[OpenRouter] Rate limit hit (429):", errorText);
     throw new Error("RATE_LIMIT_REACHED: " + errorText);
   }
 
   if (!response.ok) {
     const errorText = await response.text();
+    console.error(`[OpenRouter] API error: ${response.status} -`, errorText);
     throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
   }
 
   const data = (await response.json()) as {
     choices?: { message?: { content?: string } }[];
   };
+
+  // Add a 15 second delay after each successful API call to avoid rate limits
+  console.log(
+    "[OpenRouter] API call successful. Waiting 15 seconds to avoid rate limit..."
+  );
+  await new Promise((resolve) => setTimeout(resolve, 15000));
+
   return data.choices?.[0]?.message?.content?.trim() || "";
 }
 
 export class OpenRouterService {
   /**
-   * Generate a summary for a specific path
+   * Generate comprehensive AI content for a path - combines all 6 previous functions into one
    */
-  async generatePathSummary(path: string, content: string): Promise<string> {
-    const prompt = `Generate a concise 1-2 sentence summary for this webpage content. Focus on the main purpose and key information.\n\nPath: ${path}\nContent: ${content.substring(
-      0,
-      2000
-    )}...\n\nSummary:`;
-    try {
-      return await callOpenRouter([
-        {
-          role: "system",
-          content: "You are a helpful assistant for website content analysis.",
-        },
-        { role: "user", content: prompt },
-      ]);
-    } catch (error) {
-      console.error("Error generating path summary:", error);
-      return "Summary generation failed";
-    }
-  }
+  async generateAIContent(
+    path: string,
+    content: string
+  ): Promise<AIGeneratedContent> {
+    const prompt = `Analyze this webpage content and provide the following information:
 
-  /**
-   * Generate context snippet for a path
-   */
-  async generateContextSnippet(path: string, content: string): Promise<string> {
-    const prompt = `Generate a brief context snippet (2-3 sentences) that describes what this page is about and its key value proposition.\n\nPath: ${path}\nContent: ${content.substring(
-      0,
-      2000
-    )}...\n\nContext Snippet:`;
-    try {
-      return await callOpenRouter([
-        {
-          role: "system",
-          content: "You are a helpful assistant for website content analysis.",
-        },
-        { role: "user", content: prompt },
-      ]);
-    } catch (error) {
-      console.error("Error generating context snippet:", error);
-      return "Context snippet generation failed";
-    }
-  }
+Path: ${path}
+Content: ${content.substring(0, 3000)}...
 
-  /**
-   * Extract keywords from content
-   */
-  async extractKeywords(content: string): Promise<string[]> {
-    const prompt = `Extract 5-10 relevant keywords from this content. Return only the keywords as a comma-separated list.\n\nContent: ${content.substring(
-      0,
-      2000
-    )}...\n\nKeywords:`;
+Please provide your response in this exact format:
+
+SUMMARY: [1-2 sentence summary of the main purpose and key information]
+CONTEXT: [2-3 sentences describing what this page is about and its key value proposition]
+KEYWORDS: [keyword1, keyword2, keyword3, keyword4, keyword5]
+CONTENT_TYPE: [page|blog|docs|project|archive|terms]
+PRIORITY: [high|medium|low]
+AI_USAGE: [allow|citation-only|no-fine-tuning|disallow]
+
+Guidelines:
+- CONTENT_TYPE: page (regular pages), blog (blog posts), docs (documentation), project (project pages), archive (archived content), terms (legal/terms pages)
+- PRIORITY: high (main pages, important content), medium (regular content), low (archive, terms, less important)
+- AI_USAGE: allow (standard content), citation-only (citation only), no-fine-tuning (use but don't train), disallow (should not be used by AI)
+- KEYWORDS: 5-10 relevant keywords separated by commas
+- SUMMARY: concise 1-2 sentence summary
+- CONTEXT: brief context about page purpose and value
+
+Return only the formatted response with the exact labels shown above.`;
+
     try {
       const result = await callOpenRouter([
         {
           role: "system",
-          content: "You are a helpful assistant for website content analysis.",
+          content:
+            "You are a helpful assistant for website content analysis. Always provide responses in the exact format requested.",
         },
         { role: "user", content: prompt },
       ]);
-      return result
-        .split(",")
-        .map((k) => k.trim())
-        .filter(Boolean);
-    } catch (error) {
-      console.error("Error extracting keywords:", error);
-      return [];
-    }
-  }
 
-  /**
-   * Determine content type
-   */
-  async determineContentType(path: string, content: string): Promise<string> {
-    const prompt = `Based on the path and content, determine the content type. Choose from: page, blog, docs, project, archive, terms.\n\nPath: ${path}\nContent: ${content.substring(
-      0,
-      1000
-    )}...\n\nContent Type:`;
-    try {
-      const result = await callOpenRouter([
-        {
-          role: "system",
-          content: "You are a helpful assistant for website content analysis.",
-        },
-        { role: "user", content: prompt },
-      ]);
-      const allowedTypes = [
+      // Parse the text response
+      const lines = result.split("\n").filter((line) => line.trim());
+      const parsed: any = {};
+
+      console.log("🔍 AI raw response:", result);
+      console.log("🔍 AI parsed lines:", lines);
+
+      for (const line of lines) {
+        if (line.startsWith("SUMMARY:")) {
+          parsed.summary = line.replace("SUMMARY:", "").trim();
+        } else if (line.startsWith("CONTEXT:")) {
+          parsed.contextSnippet = line.replace("CONTEXT:", "").trim();
+        } else if (line.startsWith("KEYWORDS:")) {
+          const keywordsStr = line.replace("KEYWORDS:", "").trim();
+          parsed.keywords = keywordsStr
+            .split(",")
+            .map((k) => k.trim())
+            .filter(Boolean);
+        } else if (line.startsWith("CONTENT_TYPE:")) {
+          parsed.contentType = line
+            .replace("CONTENT_TYPE:", "")
+            .trim()
+            .toLowerCase();
+        } else if (line.startsWith("PRIORITY:")) {
+          parsed.priority = line.replace("PRIORITY:", "").trim().toLowerCase();
+        } else if (line.startsWith("AI_USAGE:")) {
+          parsed.aiUsageDirective = line
+            .replace("AI_USAGE:", "")
+            .trim()
+            .toLowerCase();
+        }
+      }
+
+      console.log("🔍 AI parsed result:", parsed);
+
+      // Validate and sanitize the response
+      const allowedContentTypes = [
         "page",
         "blog",
         "docs",
@@ -145,102 +156,31 @@ export class OpenRouterService {
         "archive",
         "terms",
       ];
-      const type = result.toLowerCase();
-      return allowedTypes.includes(type) ? type : "page";
-    } catch (error) {
-      console.error("Error determining content type:", error);
-      return "page";
-    }
-  }
-
-  /**
-   * Determine priority level
-   */
-  async determinePriority(
-    path: string,
-    content: string
-  ): Promise<"high" | "medium" | "low"> {
-    const prompt = `Based on the path and content, determine the priority level for AI crawling. Consider factors like:\n- High: Main pages, important content, frequently accessed\n- Medium: Regular content pages\n- Low: Archive, terms, less important pages\n\nPath: ${path}\nContent: ${content.substring(
-      0,
-      1000
-    )}...\n\nPriority (high/medium/low):`;
-    try {
-      const result = await callOpenRouter([
-        {
-          role: "system",
-          content: "You are a helpful assistant for website content analysis.",
-        },
-        { role: "user", content: prompt },
-      ]);
-      const value = result.toLowerCase();
-      if (["high", "medium", "low"].includes(value)) return value as any;
-      return "medium";
-    } catch (error) {
-      console.error("Error determining priority:", error);
-      return "medium";
-    }
-  }
-
-  /**
-   * Suggest AI usage directive
-   */
-  async suggestAIUsageDirective(
-    path: string,
-    content: string
-  ): Promise<"allow" | "citation-only" | "no-fine-tuning" | "disallow"> {
-    const prompt = `Based on the path and content, suggest an AI usage directive:\n- allow: Standard content that can be freely used\n- citation-only: Content that should only be used for citations\n- no-fine-tuning: Content that can be used but not for training\n- disallow: Content that should not be used by AI\n\nPath: ${path}\nContent: ${content.substring(
-      0,
-      1000
-    )}...\n\nDirective:`;
-    try {
-      const result = await callOpenRouter([
-        {
-          role: "system",
-          content: "You are a helpful assistant for website content analysis.",
-        },
-        { role: "user", content: prompt },
-      ]);
-      const allowed = ["allow", "citation-only", "no-fine-tuning", "disallow"];
-      const value = result.toLowerCase();
-      return allowed.includes(value) ? (value as any) : "allow";
-    } catch (error) {
-      console.error("Error suggesting AI usage directive:", error);
-      return "allow";
-    }
-  }
-
-  /**
-   * Generate comprehensive AI content for a path
-   */
-  async generateAIContent(
-    path: string,
-    content: string
-  ): Promise<AIGeneratedContent> {
-    try {
-      const [
-        summary,
-        contextSnippet,
-        keywords,
-        contentType,
-        priority,
-        aiUsageDirective,
-      ] = await Promise.all([
-        this.generatePathSummary(path, content),
-        this.generateContextSnippet(path, content),
-        this.extractKeywords(content),
-        this.determineContentType(path, content),
-        this.determinePriority(path, content),
-        this.suggestAIUsageDirective(path, content),
-      ]);
+      const allowedPriorities = ["high", "medium", "low"];
+      const allowedDirectives = [
+        "allow",
+        "citation-only",
+        "no-fine-tuning",
+        "disallow",
+      ];
 
       return {
         path,
-        summary,
-        contextSnippet,
-        keywords,
-        contentType,
-        priority,
-        aiUsageDirective,
+        summary: parsed.summary || "Summary generation failed",
+        contextSnippet:
+          parsed.contextSnippet || "Context snippet generation failed",
+        keywords: Array.isArray(parsed.keywords)
+          ? parsed.keywords.slice(0, 10)
+          : [],
+        contentType: allowedContentTypes.includes(parsed.contentType)
+          ? parsed.contentType
+          : "page",
+        priority: allowedPriorities.includes(parsed.priority)
+          ? parsed.priority
+          : "medium",
+        aiUsageDirective: allowedDirectives.includes(parsed.aiUsageDirective)
+          ? parsed.aiUsageDirective
+          : "allow",
         generatedAt: new Date().toISOString(),
         model: OPENROUTER_MODEL,
       };
@@ -261,7 +201,7 @@ export class OpenRouterService {
   }
 
   /**
-   * Enrich metadata with AI analysis
+   * Enrich metadata with AI analysis - simplified version
    */
   async enrichMetadata(
     title: string,
@@ -269,20 +209,14 @@ export class OpenRouterService {
     content: string
   ): Promise<EnhancedMetadata> {
     try {
-      const [keywords, contentType, priority, aiUsageDirective] =
-        await Promise.all([
-          this.extractKeywords(content),
-          this.determineContentType("", content),
-          this.determinePriority("", content),
-          this.suggestAIUsageDirective("", content),
-        ]);
+      const aiContent = await this.generateAIContent("", content);
       return {
         title,
         description,
-        keywords,
-        contentType,
-        priority,
-        aiUsageDirective,
+        keywords: aiContent.keywords,
+        contentType: aiContent.contentType,
+        priority: aiContent.priority,
+        aiUsageDirective: aiContent.aiUsageDirective,
         lastModified: new Date().toISOString(),
       };
     } catch (error) {
@@ -314,14 +248,24 @@ export class OpenRouterService {
     }
 
     try {
-      const prompt = `Group these website paths into logical hierarchical sections. For each group, provide a name and description.\n\nPaths: ${paths.join(
-        "\n"
-      )}\n\nReturn as JSON array with format:\n[\n  {\n    "group": "Main Pages",\n    "paths": ["/", "/about", "/contact"],\n    "description": "Primary navigation pages"\n  }\n]`;
+      const prompt = `Group these website paths into logical hierarchical sections. For each group, provide a name and description.
+
+Paths: ${paths.join("\n")}
+
+Return as JSON array with format:
+[
+  {
+    "group": "Main Pages",
+    "paths": ["/", "/about", "/contact"],
+    "description": "Primary navigation pages"
+  }
+]`;
 
       const result = await callOpenRouter([
         {
           role: "system",
-          content: "You are a helpful assistant for website content analysis.",
+          content:
+            "You are a helpful assistant for website content analysis. Always return valid JSON.",
         },
         { role: "user", content: prompt },
       ]);

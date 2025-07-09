@@ -144,7 +144,7 @@ router.post("/ai-enrich", async (req, res) => {
             });
             return;
         }
-        const aiContent = await gemini_service_1.geminiService.generateAIContent(path, content);
+        const aiContent = await gemini_service_1.openRouterService.generateAIContent(path, content);
         res.json({
             success: true,
             data: aiContent,
@@ -169,7 +169,7 @@ router.post("/hierarchical-structure", async (req, res) => {
             });
             return;
         }
-        const structure = await gemini_service_1.geminiService.generateHierarchicalStructure(paths);
+        const structure = await gemini_service_1.openRouterService.generateHierarchicalStructure(paths);
         res.json({
             success: true,
             data: structure,

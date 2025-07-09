@@ -107,6 +107,7 @@ router.get("/analyze-website", async (req, res) => {
             message: "Paths converted",
         })}\n\n`);
         let aiGeneratedContent = [];
+        let rateLimitHit = false;
         if (aiEnrichment) {
             const total = pathSelections.length;
             let completed = 0;
@@ -131,13 +132,32 @@ router.get("/analyze-website", async (req, res) => {
                         content += `Keywords: ${meta.keywords}\n`;
                     if (!content)
                         content = `Path: ${path.path}`;
-                    const ai = await gemini_service_1.geminiService.generateAIContent(path.path, content);
-                    if (meta)
+                    let ai;
+                    try {
+                        ai = await gemini_service_1.openRouterService.generateAIContent(path.path, content);
+                    }
+                    catch (error) {
+                        if (error instanceof Error &&
+                            error.message &&
+                            error.message.startsWith("RATE_LIMIT_REACHED:")) {
+                            res.write(`event: error\ndata: ${JSON.stringify({
+                                error: "AI rate limit reached. Please try again in a few minutes.",
+                                details: error.message,
+                            })}\n\n`);
+                            rateLimitHit = true;
+                            break;
+                        }
+                        else {
+                            console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
+                            continue;
+                        }
+                    }
+                    if (meta && ai)
                         meta.summary = ai.summary;
-                    aiGeneratedContent.push(ai);
+                    if (ai)
+                        aiGeneratedContent.push(ai);
                 }
                 catch (error) {
-                    console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
                 }
                 completed++;
                 const percent = 99 + Math.round((completed / total) * 0.5);
@@ -145,32 +165,43 @@ router.get("/analyze-website", async (req, res) => {
                     progress: percent,
                     message: `AI enrichment: ${completed}/${total}`,
                 })}\n\n`);
-                await new Promise((resolve) => setTimeout(resolve, 3000));
+                await new Promise((resolve) => setTimeout(resolve, 10000));
             }
+            if (!rateLimitHit) {
+                res.write(`event: progress\ndata: ${JSON.stringify({
+                    progress: 99.5,
+                    message: "AI enrichment complete",
+                })}\n\n`);
+            }
+        }
+        if (!aiEnrichment || !rateLimitHit) {
+            const response = {
+                success: true,
+                metadata: {
+                    title: websiteData.title,
+                    description: websiteData.description,
+                    url: url,
+                    totalPagesCrawled: websiteData.totalPagesCrawled,
+                    totalLinksFound: websiteData.totalLinksFound,
+                    uniquePathsFound: websiteData.uniquePathsFound,
+                },
+                paths: pathSelections,
+                pageMetadatas: websiteData.pageMetadatas,
+                aiGeneratedContent: aiEnrichment ? aiGeneratedContent : undefined,
+            };
+            console.log("🔍 Backend sending response:", {
+                aiEnrichment,
+                rateLimitHit,
+                aiGeneratedContentLength: aiGeneratedContent.length,
+                hasAiContent: !!response.aiGeneratedContent,
+                aiContentSample: response.aiGeneratedContent?.slice(0, 2),
+            });
+            res.write(`event: result\ndata: ${JSON.stringify(response)}\n\n`);
             res.write(`event: progress\ndata: ${JSON.stringify({
-                progress: 99.5,
-                message: "AI enrichment complete",
+                progress: 100,
+                message: "Analysis complete",
             })}\n\n`);
         }
-        const response = {
-            success: true,
-            metadata: {
-                title: websiteData.title,
-                description: websiteData.description,
-                url: url,
-                totalPagesCrawled: websiteData.totalPagesCrawled,
-                totalLinksFound: websiteData.totalLinksFound,
-                uniquePathsFound: websiteData.uniquePathsFound,
-            },
-            paths: pathSelections,
-            pageMetadatas: websiteData.pageMetadatas,
-            aiGeneratedContent: aiEnrichment ? aiGeneratedContent : undefined,
-        };
-        res.write(`event: result\ndata: ${JSON.stringify(response)}\n\n`);
-        res.write(`event: progress\ndata: ${JSON.stringify({
-            progress: 100,
-            message: "Analysis complete",
-        })}\n\n`);
         res.end();
     }
     catch (error) {
@@ -184,44 +215,5 @@ router.get("/analyze-website", async (req, res) => {
             activeSessions.delete(sessionId);
     }
 });
-async function enrichPathsWithAI(paths, pageMetadatas) {
-    const aiContent = [];
-    const batchSize = 3;
-    for (let i = 0; i < paths.length; i += batchSize) {
-        const batch = paths.slice(i, i + batchSize);
-        const batchPromises = batch.map(async (path) => {
-            try {
-                const metadata = pageMetadatas?.find((m) => m.path === path.path);
-                let content = "";
-                if (metadata?.title)
-                    content += `Title: ${metadata.title}\n`;
-                if (metadata?.description)
-                    content += `Description: ${metadata.description}\n`;
-                if (metadata?.keywords)
-                    content += `Keywords: ${metadata.keywords}\n`;
-                if (!content) {
-                    content = `Path: ${path.path}`;
-                }
-                const aiGenerated = await gemini_service_1.geminiService.generateAIContent(path.path, content);
-                path.summary = aiGenerated.summary;
-                path.contextSnippet = aiGenerated.contextSnippet;
-                path.priority = aiGenerated.priority;
-                path.contentType = aiGenerated.contentType;
-                path.aiUsageDirective = aiGenerated.aiUsageDirective;
-                return aiGenerated;
-            }
-            catch (error) {
-                console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
-                return undefined;
-            }
-        });
-        const batchResults = await Promise.all(batchPromises);
-        aiContent.push(...batchResults.filter(Boolean));
-        if (i + batchSize < paths.length) {
-            await new Promise((resolve) => setTimeout(resolve, 5000));
-        }
-    }
-    return aiContent;
-}
 exports.default = router;
 //# sourceMappingURL=website-analysis.js.map

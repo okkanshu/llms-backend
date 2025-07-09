@@ -206,7 +206,8 @@ class MarkdownGeneratorService {
         let summary = page.summary;
         if (!summary) {
             try {
-                summary = await gemini_service_1.geminiService.generatePathSummary(page.path, page.content);
+                const aiContent = await gemini_service_1.openRouterService.generateAIContent(page.path, page.content);
+                summary = aiContent.summary;
             }
             catch { }
         }

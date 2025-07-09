@@ -3,240 +3,149 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.geminiService = exports.GeminiService = void 0;
-const generative_ai_1 = require("@google/generative-ai");
+exports.openRouterService = exports.OpenRouterService = void 0;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
-class GeminiService {
-    constructor() {
-        this.lastRequestTime = 0;
-        this.minRequestInterval = 8000;
-        this.apiKey = process.env.GEMINI_API_KEY || "";
-        if (!this.apiKey) {
-            console.warn("⚠️ GEMINI_API_KEY not found in environment variables");
-        }
-        this.genAI = new generative_ai_1.GoogleGenerativeAI(this.apiKey);
-        this.model = this.genAI.getGenerativeModel({
-            model: "gemini-2.0-flash-exp",
-        });
+console.log("🔑 Loaded OPENROUTER_API_KEY:", process.env.OPENROUTER_API_KEY
+    ? process.env.OPENROUTER_API_KEY.slice(0, 8) + "..."
+    : undefined);
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || "";
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "deepseek/deepseek-r1-0528:free";
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+if (!OPENROUTER_API_KEY) {
+    console.warn("⚠️ OPENROUTER_API_KEY not found in environment variables");
+}
+async function callOpenRouter(messages, temperature = 0.7, maxTokens = 1024) {
+    console.log("📡 Sending auth header:", `Bearer ${OPENROUTER_API_KEY ? OPENROUTER_API_KEY.slice(0, 8) + "..." : ""}`);
+    const response = await fetch(OPENROUTER_API_URL, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+            model: OPENROUTER_MODEL,
+            messages,
+            temperature,
+            max_tokens: maxTokens,
+        }),
+    });
+    if (response.status === 429) {
+        const errorText = await response.text();
+        console.error("[OpenRouter] Rate limit hit (429):", errorText);
+        throw new Error("RATE_LIMIT_REACHED: " + errorText);
     }
-    async waitForRateLimit() {
-        const now = Date.now();
-        const timeSinceLastRequest = now - this.lastRequestTime;
-        if (timeSinceLastRequest < this.minRequestInterval) {
-            const waitTime = this.minRequestInterval - timeSinceLastRequest;
-            await new Promise((resolve) => setTimeout(resolve, waitTime));
-        }
-        this.lastRequestTime = Date.now();
+    if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[OpenRouter] API error: ${response.status} -`, errorText);
+        throw new Error(`OpenRouter API error: ${response.status} - ${errorText}`);
     }
-    async retryWithBackoff(fn, maxRetries = 3, baseDelay = 8000) {
-        for (let attempt = 0; attempt <= maxRetries; attempt++) {
-            try {
-                await this.waitForRateLimit();
-                return await fn();
-            }
-            catch (error) {
-                if (attempt === maxRetries) {
-                    throw error;
-                }
-                if (error.status === 429 || error.message?.includes("429")) {
-                    const delay = baseDelay;
-                    console.warn(`⚠️ Rate limited, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries + 1})`);
-                    await new Promise((resolve) => setTimeout(resolve, delay));
-                    continue;
-                }
-                throw error;
-            }
-        }
-        throw new Error("Max retries exceeded");
-    }
-    async generatePathSummary(path, content) {
-        if (!this.apiKey) {
-            return "Summary not available (AI service not configured)";
-        }
-        try {
-            const prompt = `Generate a concise 1-2 sentence summary for this webpage content. Focus on the main purpose and key information.
-
-Path: ${path}
-Content: ${content.substring(0, 2000)}...
-
-Summary:`;
-            return await this.retryWithBackoff(async () => {
-                const result = await this.model.generateContent(prompt);
-                const response = await result.response;
-                return response.text().trim();
-            });
-        }
-        catch (error) {
-            console.error("Error generating path summary:", error);
-            return "Summary generation failed";
-        }
-    }
-    async generateContextSnippet(path, content) {
-        if (!this.apiKey) {
-            return "Context snippet not available (AI service not configured)";
-        }
-        try {
-            const prompt = `Generate a brief context snippet (2-3 sentences) that describes what this page is about and its key value proposition.
-
-Path: ${path}
-Content: ${content.substring(0, 2000)}...
-
-Context Snippet:`;
-            return await this.retryWithBackoff(async () => {
-                const result = await this.model.generateContent(prompt);
-                const response = await result.response;
-                return response.text().trim();
-            });
-        }
-        catch (error) {
-            console.error("Error generating context snippet:", error);
-            return "Context snippet generation failed";
-        }
-    }
-    async extractKeywords(content) {
-        if (!this.apiKey) {
-            return [];
-        }
-        try {
-            const prompt = `Extract 5-10 relevant keywords from this content. Return only the keywords as a comma-separated list.
-
-Content: ${content.substring(0, 2000)}...
-
-Keywords:`;
-            return await this.retryWithBackoff(async () => {
-                const result = await this.model.generateContent(prompt);
-                const response = await result.response;
-                const keywords = response
-                    .text()
-                    .trim()
-                    .split(",")
-                    .map((k) => k.trim());
-                return keywords.filter((k) => k.length > 0);
-            });
-        }
-        catch (error) {
-            console.error("Error extracting keywords:", error);
-            return [];
-        }
-    }
-    async determineContentType(path, content) {
-        if (!this.apiKey) {
-            return "page";
-        }
-        try {
-            const prompt = `Based on the path and content, determine the content type. Choose from: page, blog, docs, project, archive, terms.
-
-Path: ${path}
-Content: ${content.substring(0, 1000)}...
-
-Content Type:`;
-            return await this.retryWithBackoff(async () => {
-                const result = await this.model.generateContent(prompt);
-                const response = await result.response;
-                const contentType = response.text().trim().toLowerCase();
-                const allowedTypes = [
-                    "page",
-                    "blog",
-                    "docs",
-                    "project",
-                    "archive",
-                    "terms",
-                ];
-                return allowedTypes.includes(contentType) ? contentType : "page";
-            });
-        }
-        catch (error) {
-            console.error("Error determining content type:", error);
-            return "page";
-        }
-    }
-    async determinePriority(path, content) {
-        if (!this.apiKey) {
-            return "medium";
-        }
-        try {
-            const prompt = `Based on the path and content, determine the priority level for AI crawling. Consider factors like:
-- High: Main pages, important content, frequently accessed
-- Medium: Regular content pages
-- Low: Archive, terms, less important pages
-
-Path: ${path}
-Content: ${content.substring(0, 1000)}...
-
-Priority (high/medium/low):`;
-            return await this.retryWithBackoff(async () => {
-                const result = await this.model.generateContent(prompt);
-                const response = await result.response;
-                const priority = response.text().trim().toLowerCase();
-                if (priority === "high" ||
-                    priority === "medium" ||
-                    priority === "low") {
-                    return priority;
-                }
-                return "medium";
-            });
-        }
-        catch (error) {
-            console.error("Error determining priority:", error);
-            return "medium";
-        }
-    }
-    async suggestAIUsageDirective(path, content) {
-        if (!this.apiKey) {
-            return "allow";
-        }
-        try {
-            const prompt = `Based on the path and content, suggest an AI usage directive:
-- allow: Standard content that can be freely used
-- citation-only: Content that should only be used for citations
-- no-fine-tuning: Content that can be used but not for training
-- disallow: Content that should not be used by AI
-
-Path: ${path}
-Content: ${content.substring(0, 1000)}...
-
-Directive:`;
-            return await this.retryWithBackoff(async () => {
-                const result = await this.model.generateContent(prompt);
-                const response = await result.response;
-                const directive = response.text().trim().toLowerCase();
-                const allowedDirectives = [
-                    "allow",
-                    "citation-only",
-                    "no-fine-tuning",
-                    "disallow",
-                ];
-                return allowedDirectives.includes(directive)
-                    ? directive
-                    : "allow";
-            });
-        }
-        catch (error) {
-            console.error("Error suggesting AI usage directive:", error);
-            return "allow";
-        }
-    }
+    const data = (await response.json());
+    console.log("[OpenRouter] API call successful. Waiting 15 seconds to avoid rate limit...");
+    await new Promise((resolve) => setTimeout(resolve, 15000));
+    return data.choices?.[0]?.message?.content?.trim() || "";
+}
+class OpenRouterService {
     async generateAIContent(path, content) {
+        const prompt = `Analyze this webpage content and provide the following information:
+
+Path: ${path}
+Content: ${content.substring(0, 3000)}...
+
+Please provide your response in this exact format:
+
+SUMMARY: [1-2 sentence summary of the main purpose and key information]
+CONTEXT: [2-3 sentences describing what this page is about and its key value proposition]
+KEYWORDS: [keyword1, keyword2, keyword3, keyword4, keyword5]
+CONTENT_TYPE: [page|blog|docs|project|archive|terms]
+PRIORITY: [high|medium|low]
+AI_USAGE: [allow|citation-only|no-fine-tuning|disallow]
+
+Guidelines:
+- CONTENT_TYPE: page (regular pages), blog (blog posts), docs (documentation), project (project pages), archive (archived content), terms (legal/terms pages)
+- PRIORITY: high (main pages, important content), medium (regular content), low (archive, terms, less important)
+- AI_USAGE: allow (standard content), citation-only (citation only), no-fine-tuning (use but don't train), disallow (should not be used by AI)
+- KEYWORDS: 5-10 relevant keywords separated by commas
+- SUMMARY: concise 1-2 sentence summary
+- CONTEXT: brief context about page purpose and value
+
+Return only the formatted response with the exact labels shown above.`;
         try {
-            const [summary, contextSnippet, keywords, contentType, priority, aiUsageDirective,] = await Promise.all([
-                this.generatePathSummary(path, content),
-                this.generateContextSnippet(path, content),
-                this.extractKeywords(content),
-                this.determineContentType(path, content),
-                this.determinePriority(path, content),
-                this.suggestAIUsageDirective(path, content),
+            const result = await callOpenRouter([
+                {
+                    role: "system",
+                    content: "You are a helpful assistant for website content analysis. Always provide responses in the exact format requested.",
+                },
+                { role: "user", content: prompt },
             ]);
+            const lines = result.split("\n").filter((line) => line.trim());
+            const parsed = {};
+            console.log("🔍 AI raw response:", result);
+            console.log("🔍 AI parsed lines:", lines);
+            for (const line of lines) {
+                if (line.startsWith("SUMMARY:")) {
+                    parsed.summary = line.replace("SUMMARY:", "").trim();
+                }
+                else if (line.startsWith("CONTEXT:")) {
+                    parsed.contextSnippet = line.replace("CONTEXT:", "").trim();
+                }
+                else if (line.startsWith("KEYWORDS:")) {
+                    const keywordsStr = line.replace("KEYWORDS:", "").trim();
+                    parsed.keywords = keywordsStr
+                        .split(",")
+                        .map((k) => k.trim())
+                        .filter(Boolean);
+                }
+                else if (line.startsWith("CONTENT_TYPE:")) {
+                    parsed.contentType = line
+                        .replace("CONTENT_TYPE:", "")
+                        .trim()
+                        .toLowerCase();
+                }
+                else if (line.startsWith("PRIORITY:")) {
+                    parsed.priority = line.replace("PRIORITY:", "").trim().toLowerCase();
+                }
+                else if (line.startsWith("AI_USAGE:")) {
+                    parsed.aiUsageDirective = line
+                        .replace("AI_USAGE:", "")
+                        .trim()
+                        .toLowerCase();
+                }
+            }
+            console.log("🔍 AI parsed result:", parsed);
+            const allowedContentTypes = [
+                "page",
+                "blog",
+                "docs",
+                "project",
+                "archive",
+                "terms",
+            ];
+            const allowedPriorities = ["high", "medium", "low"];
+            const allowedDirectives = [
+                "allow",
+                "citation-only",
+                "no-fine-tuning",
+                "disallow",
+            ];
             return {
                 path,
-                summary,
-                contextSnippet,
-                keywords,
-                contentType,
-                priority,
-                aiUsageDirective,
+                summary: parsed.summary || "Summary generation failed",
+                contextSnippet: parsed.contextSnippet || "Context snippet generation failed",
+                keywords: Array.isArray(parsed.keywords)
+                    ? parsed.keywords.slice(0, 10)
+                    : [],
+                contentType: allowedContentTypes.includes(parsed.contentType)
+                    ? parsed.contentType
+                    : "page",
+                priority: allowedPriorities.includes(parsed.priority)
+                    ? parsed.priority
+                    : "medium",
+                aiUsageDirective: allowedDirectives.includes(parsed.aiUsageDirective)
+                    ? parsed.aiUsageDirective
+                    : "allow",
                 generatedAt: new Date().toISOString(),
-                model: "gemini-2.0-flash-exp",
+                model: OPENROUTER_MODEL,
             };
         }
         catch (error) {
@@ -250,29 +159,38 @@ Directive:`;
                 priority: "medium",
                 aiUsageDirective: "allow",
                 generatedAt: new Date().toISOString(),
-                model: "gemini-2.0-flash-exp",
+                model: OPENROUTER_MODEL,
             };
         }
     }
     async enrichMetadata(title, description, content) {
-        const [keywords, contentType, priority, aiUsageDirective] = await Promise.all([
-            this.extractKeywords(content),
-            this.determineContentType("", content),
-            this.determinePriority("", content),
-            this.suggestAIUsageDirective("", content),
-        ]);
-        return {
-            title,
-            description,
-            keywords,
-            contentType,
-            priority,
-            aiUsageDirective,
-            lastModified: new Date().toISOString(),
-        };
+        try {
+            const aiContent = await this.generateAIContent("", content);
+            return {
+                title,
+                description,
+                keywords: aiContent.keywords,
+                contentType: aiContent.contentType,
+                priority: aiContent.priority,
+                aiUsageDirective: aiContent.aiUsageDirective,
+                lastModified: new Date().toISOString(),
+            };
+        }
+        catch (error) {
+            console.error("Error enriching metadata:", error);
+            return {
+                title,
+                description,
+                keywords: [],
+                contentType: "page",
+                priority: "medium",
+                aiUsageDirective: "allow",
+                lastModified: new Date().toISOString(),
+            };
+        }
     }
     async generateHierarchicalStructure(paths) {
-        if (!this.apiKey) {
+        if (!OPENROUTER_API_KEY) {
             return [];
         }
         try {
@@ -288,9 +206,14 @@ Return as JSON array with format:
     "description": "Primary navigation pages"
   }
 ]`;
-            const result = await this.model.generateContent(prompt);
-            const response = await result.response;
-            const jsonMatch = response.text().match(/\[[\s\S]*\]/);
+            const result = await callOpenRouter([
+                {
+                    role: "system",
+                    content: "You are a helpful assistant for website content analysis. Always return valid JSON.",
+                },
+                { role: "user", content: prompt },
+            ]);
+            const jsonMatch = result.match(/\[[\s\S]*\]/);
             if (jsonMatch) {
                 return JSON.parse(jsonMatch[0]);
             }
@@ -302,6 +225,6 @@ Return as JSON array with format:
         }
     }
 }
-exports.GeminiService = GeminiService;
-exports.geminiService = new GeminiService();
+exports.OpenRouterService = OpenRouterService;
+exports.openRouterService = new OpenRouterService();
 //# sourceMappingURL=gemini.service.js.map

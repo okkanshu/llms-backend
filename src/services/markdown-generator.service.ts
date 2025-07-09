@@ -330,10 +330,11 @@ export class MarkdownGeneratorService {
     let summary = (page as any).summary;
     if (!summary) {
       try {
-        summary = await openRouterService.generatePathSummary(
+        const aiContent = await openRouterService.generateAIContent(
           page.path,
           page.content
         );
+        summary = aiContent.summary;
       } catch {}
     }
     if (
