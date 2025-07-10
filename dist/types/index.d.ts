@@ -23,57 +23,12 @@ export interface AIGeneratedContent {
     generatedAt: string;
     model: string;
 }
-export interface EnhancedMetadata {
-    title: string;
-    description: string;
-    keywords?: string[];
-    language?: string;
-    contentType?: string;
-    lastModified?: string;
-    priority?: "high" | "medium" | "low";
-    aiUsageDirective?: "allow" | "citation-only" | "no-fine-tuning" | "disallow";
-}
-export interface LLMsTxtPayload {
-    bot: LLMBot;
-    allowPaths: string[];
-    disallowPaths: string[];
-    websiteUrl: string;
-    generateFull?: boolean;
-    generateMarkdown?: boolean;
-    includeSummaries?: boolean;
-    includeContextSnippets?: boolean;
-    hierarchicalLayout?: boolean;
-    aiEnrichment?: boolean;
-}
 export interface LLMsFullPayload {
     websiteUrl: string;
     includeImages?: boolean;
     includeLinks?: boolean;
     maxDepth?: number;
     aiEnrichment?: boolean;
-}
-export interface AutomationConfig {
-    enabled: boolean;
-    schedule: string;
-    websiteUrl: string;
-    llmBot: LLMBot;
-    generateFull: boolean;
-    generateMarkdown: boolean;
-    webhookUrl?: string;
-    lastRun?: string;
-    nextRun?: string;
-}
-export interface AnalyticsData {
-    websiteUrl: string;
-    accessCount: number;
-    lastAccessed: string;
-    userAgents: string[];
-    mostAccessedPaths: Array<{
-        path: string;
-        count: number;
-    }>;
-    generationCount: number;
-    lastGenerated: string;
 }
 export interface WebsiteAnalysisRequest {
     url: string;
@@ -95,6 +50,7 @@ export interface WebsiteAnalysisResponse {
         title: string;
         description: string;
         keywords?: string;
+        bodyContent?: string;
     }>;
     aiGeneratedContent?: AIGeneratedContent[];
     perPathMetadata?: Array<{
@@ -104,12 +60,6 @@ export interface WebsiteAnalysisResponse {
         keywords?: string;
     }>;
     success: boolean;
-    error?: string;
-}
-export interface LLMsTxtGenerationResponse {
-    success: boolean;
-    content: string;
-    filename: string;
     error?: string;
 }
 export interface LLMsFullGenerationResponse {
@@ -129,11 +79,6 @@ export interface MarkdownGenerationResponse {
     }>;
     error?: string;
 }
-export interface AnalyticsResponse {
-    success: boolean;
-    data: AnalyticsData;
-    error?: string;
-}
 export declare const WebsiteAnalysisRequestSchema: z.ZodObject<{
     url: z.ZodString;
     bots: z.ZodArray<z.ZodEnum<["ChatGPT-User", "GPTBot", "GoogleExtended", "Claude", "Anthropic", "CCBot"]>, "many">;
@@ -146,40 +91,6 @@ export declare const WebsiteAnalysisRequestSchema: z.ZodObject<{
     url: string;
     bots: ("ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot")[];
     aiEnrichment?: boolean | undefined;
-}>;
-export declare const LLMsTxtPayloadSchema: z.ZodObject<{
-    bot: z.ZodEnum<["ChatGPT-User", "GPTBot", "GoogleExtended", "Claude", "Anthropic", "CCBot"]>;
-    allowPaths: z.ZodArray<z.ZodString, "many">;
-    disallowPaths: z.ZodArray<z.ZodString, "many">;
-    websiteUrl: z.ZodString;
-    generateFull: z.ZodOptional<z.ZodBoolean>;
-    generateMarkdown: z.ZodOptional<z.ZodBoolean>;
-    includeSummaries: z.ZodOptional<z.ZodBoolean>;
-    includeContextSnippets: z.ZodOptional<z.ZodBoolean>;
-    hierarchicalLayout: z.ZodOptional<z.ZodBoolean>;
-    aiEnrichment: z.ZodOptional<z.ZodBoolean>;
-}, "strip", z.ZodTypeAny, {
-    bot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
-    allowPaths: string[];
-    disallowPaths: string[];
-    websiteUrl: string;
-    aiEnrichment?: boolean | undefined;
-    generateFull?: boolean | undefined;
-    generateMarkdown?: boolean | undefined;
-    includeSummaries?: boolean | undefined;
-    includeContextSnippets?: boolean | undefined;
-    hierarchicalLayout?: boolean | undefined;
-}, {
-    bot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
-    allowPaths: string[];
-    disallowPaths: string[];
-    websiteUrl: string;
-    aiEnrichment?: boolean | undefined;
-    generateFull?: boolean | undefined;
-    generateMarkdown?: boolean | undefined;
-    includeSummaries?: boolean | undefined;
-    includeContextSnippets?: boolean | undefined;
-    hierarchicalLayout?: boolean | undefined;
 }>;
 export declare const LLMsFullPayloadSchema: z.ZodObject<{
     websiteUrl: z.ZodString;
@@ -199,65 +110,6 @@ export declare const LLMsFullPayloadSchema: z.ZodObject<{
     includeImages?: boolean | undefined;
     includeLinks?: boolean | undefined;
     maxDepth?: number | undefined;
-}>;
-export declare const PathSelectionSchema: z.ZodObject<{
-    path: z.ZodString;
-    allow: z.ZodBoolean;
-    description: z.ZodOptional<z.ZodString>;
-    priority: z.ZodOptional<z.ZodEnum<["high", "medium", "low"]>>;
-    tags: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
-    contentType: z.ZodOptional<z.ZodEnum<["page", "blog", "docs", "project", "archive", "terms"]>>;
-    lastModified: z.ZodOptional<z.ZodString>;
-    summary: z.ZodOptional<z.ZodString>;
-    contextSnippet: z.ZodOptional<z.ZodString>;
-    aiUsageDirective: z.ZodOptional<z.ZodEnum<["allow", "citation-only", "no-fine-tuning", "disallow"]>>;
-}, "strip", z.ZodTypeAny, {
-    allow: boolean;
-    path: string;
-    description?: string | undefined;
-    priority?: "high" | "medium" | "low" | undefined;
-    tags?: string[] | undefined;
-    contentType?: "page" | "blog" | "docs" | "project" | "archive" | "terms" | undefined;
-    lastModified?: string | undefined;
-    summary?: string | undefined;
-    contextSnippet?: string | undefined;
-    aiUsageDirective?: "allow" | "citation-only" | "no-fine-tuning" | "disallow" | undefined;
-}, {
-    allow: boolean;
-    path: string;
-    description?: string | undefined;
-    priority?: "high" | "medium" | "low" | undefined;
-    tags?: string[] | undefined;
-    contentType?: "page" | "blog" | "docs" | "project" | "archive" | "terms" | undefined;
-    lastModified?: string | undefined;
-    summary?: string | undefined;
-    contextSnippet?: string | undefined;
-    aiUsageDirective?: "allow" | "citation-only" | "no-fine-tuning" | "disallow" | undefined;
-}>;
-export declare const AutomationConfigSchema: z.ZodObject<{
-    enabled: z.ZodBoolean;
-    schedule: z.ZodString;
-    websiteUrl: z.ZodString;
-    llmBot: z.ZodEnum<["ChatGPT-User", "GPTBot", "GoogleExtended", "Claude", "Anthropic", "CCBot"]>;
-    generateFull: z.ZodBoolean;
-    generateMarkdown: z.ZodBoolean;
-    webhookUrl: z.ZodOptional<z.ZodString>;
-}, "strip", z.ZodTypeAny, {
-    websiteUrl: string;
-    generateFull: boolean;
-    generateMarkdown: boolean;
-    enabled: boolean;
-    schedule: string;
-    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
-    webhookUrl?: string | undefined;
-}, {
-    websiteUrl: string;
-    generateFull: boolean;
-    generateMarkdown: boolean;
-    enabled: boolean;
-    schedule: string;
-    llmBot: "ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot";
-    webhookUrl?: string | undefined;
 }>;
 export interface LLMBotConfig {
     name: LLMBot;

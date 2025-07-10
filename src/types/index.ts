@@ -36,32 +36,6 @@ export interface AIGeneratedContent {
   model: string;
 }
 
-// 4. Enhanced Metadata
-export interface EnhancedMetadata {
-  title: string;
-  description: string;
-  keywords?: string[];
-  language?: string;
-  contentType?: string;
-  lastModified?: string;
-  priority?: "high" | "medium" | "low";
-  aiUsageDirective?: "allow" | "citation-only" | "no-fine-tuning" | "disallow";
-}
-
-// 5. LLMsTxtPayload - Request body for generating llms.txt
-export interface LLMsTxtPayload {
-  bot: LLMBot;
-  allowPaths: string[];
-  disallowPaths: string[];
-  websiteUrl: string;
-  generateFull?: boolean;
-  generateMarkdown?: boolean;
-  includeSummaries?: boolean;
-  includeContextSnippets?: boolean;
-  hierarchicalLayout?: boolean;
-  aiEnrichment?: boolean;
-}
-
 // 6. LLMs Full Payload
 export interface LLMsFullPayload {
   websiteUrl: string;
@@ -69,33 +43,6 @@ export interface LLMsFullPayload {
   includeLinks?: boolean;
   maxDepth?: number;
   aiEnrichment?: boolean;
-}
-
-// 7. Automation Configuration
-export interface AutomationConfig {
-  enabled: boolean;
-  schedule: string; // cron expression
-  websiteUrl: string;
-  llmBot: LLMBot;
-  generateFull: boolean;
-  generateMarkdown: boolean;
-  webhookUrl?: string;
-  lastRun?: string;
-  nextRun?: string;
-}
-
-// 8. Analytics Data
-export interface AnalyticsData {
-  websiteUrl: string;
-  accessCount: number;
-  lastAccessed: string;
-  userAgents: string[];
-  mostAccessedPaths: Array<{
-    path: string;
-    count: number;
-  }>;
-  generationCount: number;
-  lastGenerated: string;
 }
 
 // Additional types for API requests and responses
@@ -120,6 +67,7 @@ export interface WebsiteAnalysisResponse {
     title: string;
     description: string;
     keywords?: string;
+    bodyContent?: string;
   }>;
   aiGeneratedContent?: AIGeneratedContent[];
   perPathMetadata?: Array<{
@@ -129,13 +77,6 @@ export interface WebsiteAnalysisResponse {
     keywords?: string;
   }>;
   success: boolean;
-  error?: string;
-}
-
-export interface LLMsTxtGenerationResponse {
-  success: boolean;
-  content: string;
-  filename: string;
   error?: string;
 }
 
@@ -158,12 +99,6 @@ export interface MarkdownGenerationResponse {
   error?: string;
 }
 
-export interface AnalyticsResponse {
-  success: boolean;
-  data: AnalyticsData;
-  error?: string;
-}
-
 // Zod schemas for validation
 export const WebsiteAnalysisRequestSchema = z.object({
   url: z.string().url("Invalid URL format"),
@@ -182,66 +117,12 @@ export const WebsiteAnalysisRequestSchema = z.object({
   aiEnrichment: z.boolean().optional(),
 });
 
-export const LLMsTxtPayloadSchema = z.object({
-  bot: z.enum([
-    "ChatGPT-User",
-    "GPTBot",
-    "GoogleExtended",
-    "Claude",
-    "Anthropic",
-    "CCBot",
-  ]),
-  allowPaths: z.array(z.string()),
-  disallowPaths: z.array(z.string()),
-  websiteUrl: z.string().url("Invalid website URL"),
-  generateFull: z.boolean().optional(),
-  generateMarkdown: z.boolean().optional(),
-  includeSummaries: z.boolean().optional(),
-  includeContextSnippets: z.boolean().optional(),
-  hierarchicalLayout: z.boolean().optional(),
-  aiEnrichment: z.boolean().optional(),
-});
-
 export const LLMsFullPayloadSchema = z.object({
   websiteUrl: z.string().url("Invalid website URL"),
   includeImages: z.boolean().optional(),
   includeLinks: z.boolean().optional(),
   maxDepth: z.number().min(1).max(10).optional(),
   aiEnrichment: z.boolean().optional(),
-});
-
-export const PathSelectionSchema = z.object({
-  path: z.string(),
-  allow: z.boolean(),
-  description: z.string().optional(),
-  priority: z.enum(["high", "medium", "low"]).optional(),
-  tags: z.array(z.string()).optional(),
-  contentType: z
-    .enum(["page", "blog", "docs", "project", "archive", "terms"])
-    .optional(),
-  lastModified: z.string().optional(),
-  summary: z.string().optional(),
-  contextSnippet: z.string().optional(),
-  aiUsageDirective: z
-    .enum(["allow", "citation-only", "no-fine-tuning", "disallow"])
-    .optional(),
-});
-
-export const AutomationConfigSchema = z.object({
-  enabled: z.boolean(),
-  schedule: z.string(),
-  websiteUrl: z.string().url("Invalid website URL"),
-  llmBot: z.enum([
-    "ChatGPT-User",
-    "GPTBot",
-    "GoogleExtended",
-    "Claude",
-    "Anthropic",
-    "CCBot",
-  ]),
-  generateFull: z.boolean(),
-  generateMarkdown: z.boolean(),
-  webhookUrl: z.string().url("Invalid webhook URL").optional(),
 });
 
 // Type for LLM bot configurations

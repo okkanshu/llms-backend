@@ -4,17 +4,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.llmsFullService = exports.LLMsFullService = void 0;
-const firecrawl_js_1 = __importDefault(require("@mendable/firecrawl-js"));
-const gemini_service_1 = require("./gemini.service");
+const ai_service_1 = require("./ai.service");
+const web_crawler_service_1 = require("./web-crawler.service");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 class LLMsFullService {
-    constructor() {
-        this.apiKey = process.env.FIRECRAWL_API_KEY || "";
-        this.app = new firecrawl_js_1.default({
-            apiKey: this.apiKey,
-        });
-    }
     async generateLLMsFull(payload) {
         try {
             console.log(`🔍 Starting llms-full.txt generation for: ${payload.websiteUrl}`);
@@ -55,30 +49,84 @@ class LLMsFullService {
     }
     async extractAllPages(url, maxDepth) {
         console.log(`🕷️ Crawling website with max depth: ${maxDepth}`);
-        const crawlResult = await this.app.crawlUrl(url, {
-            limit: 100,
-            maxDepth,
-            scrapeOptions: {
-                formats: ["markdown", "html"],
-            },
-        });
-        if (!crawlResult.success || !crawlResult.data) {
+        try {
+            const baseUrl = new URL(url).origin;
+            const discovered = new Set();
+            const crawled = new Map();
+            const toCrawl = [[url, 0]];
+            let pages = 0;
+            const maxPages = 1000;
+            console.log(`🕷️ Starting direct crawl for ${url}`);
+            while (toCrawl.length && pages < maxPages) {
+                const [cur, depth] = toCrawl.shift();
+                if (discovered.has(cur) || depth > maxDepth)
+                    continue;
+                discovered.add(cur);
+                pages++;
+                console.log(`📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`);
+                try {
+                    const baseDomain = new URL(baseUrl).hostname;
+                    const res = await web_crawler_service_1.webCrawlerService.crawlPage(cur, baseDomain);
+                    crawled.set(cur, res);
+                    if (res.success) {
+                        console.log(`✅ Successfully crawled: ${res.path}`);
+                        console.log(`   Title: "${res.metadata.title}"`);
+                        console.log(`   Body content length: ${res.metadata.bodyContent?.length || 0} chars`);
+                        if (res.metadata.links) {
+                            for (const link of res.metadata.links) {
+                                try {
+                                    const abs = new URL(link, baseUrl).href;
+                                    if (new URL(abs).hostname === baseDomain &&
+                                        !discovered.has(abs)) {
+                                        toCrawl.push([abs, depth + 1]);
+                                    }
+                                }
+                                catch { }
+                            }
+                        }
+                    }
+                    else {
+                        console.log(`❌ Failed to crawl: ${cur} - ${res.error}`);
+                    }
+                }
+                catch (error) {
+                    console.log(`❌ Error crawling ${cur}:`, error);
+                }
+                await new Promise((r) => setTimeout(r, 500));
+            }
+            const pagesData = [];
+            console.log(`📋 Processing ${crawled.size} crawled pages`);
+            for (const [url, crawlResult] of crawled.entries()) {
+                if (crawlResult.success) {
+                    const bodyContent = crawlResult.metadata.bodyContent || "";
+                    console.log(`📄 Processing page: ${crawlResult.path}`);
+                    console.log(`   Title: "${crawlResult.metadata.title}"`);
+                    console.log(`   Body content length: ${bodyContent.length} chars`);
+                    console.log(`   Body preview: "${bodyContent.substring(0, 100)}..."`);
+                    const pageData = {
+                        url: url,
+                        path: crawlResult.path,
+                        title: crawlResult.metadata.title || "Untitled",
+                        content: bodyContent,
+                        links: crawlResult.metadata.links || [],
+                        description: crawlResult.metadata.description || "",
+                        keywords: crawlResult.metadata.keywords
+                            ? crawlResult.metadata.keywords
+                                .split(",")
+                                .map((k) => k.trim())
+                            : [],
+                        lastModified: new Date().toISOString(),
+                    };
+                    pagesData.push(pageData);
+                }
+            }
+            console.log(`📋 Successfully extracted ${pagesData.length} pages with body content`);
+            return pagesData;
+        }
+        catch (error) {
+            console.error("❌ Failed to extract pages:", error);
             throw new Error("Failed to crawl website");
         }
-        const pagesData = [];
-        for (const page of crawlResult.data) {
-            const pageUrl = page.metadata?.sourceURL || page.metadata?.url;
-            if (!pageUrl)
-                continue;
-            try {
-                const pageData = await this.extractPageData(pageUrl, page);
-                pagesData.push(pageData);
-            }
-            catch (error) {
-                console.warn(`⚠️ Failed to extract data from ${pageUrl}:`, error);
-            }
-        }
-        return pagesData;
     }
     async extractPageData(url, page) {
         const path = new URL(url).pathname;
@@ -138,7 +186,7 @@ class LLMsFullService {
         let summary = page.summary;
         if (options.aiEnrichment && !summary) {
             try {
-                const aiContent = await gemini_service_1.openRouterService.generateAIContent(page.path, page.content);
+                const aiContent = await ai_service_1.xaiService.generateAIContent(page.path, page.content);
                 summary = aiContent.summary;
             }
             catch { }
@@ -148,7 +196,7 @@ class LLMsFullService {
         content += `\n`;
         if (options.aiEnrichment) {
             try {
-                const aiContent = await gemini_service_1.openRouterService.generateAIContent(page.path, page.content);
+                const aiContent = await ai_service_1.xaiService.generateAIContent(page.path, page.content);
                 content += `## AI Analysis\n`;
                 if (aiContent.summary) {
                     content += `**Summary:** ${aiContent.summary}\n\n`;

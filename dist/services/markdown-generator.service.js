@@ -4,17 +4,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.markdownGeneratorService = exports.MarkdownGeneratorService = void 0;
-const firecrawl_js_1 = __importDefault(require("@mendable/firecrawl-js"));
-const gemini_service_1 = require("./gemini.service");
+const ai_service_1 = require("./ai.service");
+const web_crawler_service_1 = require("./web-crawler.service");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 class MarkdownGeneratorService {
-    constructor() {
-        this.apiKey = process.env.FIRECRAWL_API_KEY || "";
-        this.app = new firecrawl_js_1.default({
-            apiKey: this.apiKey,
-        });
-    }
     async generateMarkdownPages(websiteUrl) {
         try {
             console.log(`📝 Starting markdown generation for: ${websiteUrl}`);
@@ -40,34 +34,50 @@ class MarkdownGeneratorService {
     }
     async extractKeyPages(websiteUrl) {
         console.log(`🔍 Extracting key pages from: ${websiteUrl}`);
-        const crawlResult = await this.app.crawlUrl(websiteUrl, {
-            limit: 50,
-            maxDepth: 2,
-            scrapeOptions: {
-                formats: ["markdown", "html"],
-            },
-        });
-        if (!crawlResult.success || !crawlResult.data) {
-            throw new Error("Failed to crawl website for markdown generation");
-        }
-        const keyPages = [];
-        const priorityPaths = this.getPriorityPaths();
-        for (const page of crawlResult.data) {
-            const pageUrl = page.metadata?.sourceURL || page.metadata?.url;
-            if (!pageUrl)
-                continue;
-            const path = new URL(pageUrl).pathname;
-            if (this.shouldIncludePage(path, priorityPaths)) {
-                try {
-                    const markdownPage = await this.extractMarkdownPage(pageUrl, page);
-                    keyPages.push(markdownPage);
-                }
-                catch (error) {
-                    console.warn(`⚠️ Failed to extract markdown from ${pageUrl}:`, error);
+        try {
+            const websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(websiteUrl);
+            const keyPages = [];
+            const priorityPaths = this.getPriorityPaths();
+            for (const metadata of websiteData.pageMetadatas) {
+                const path = metadata.path;
+                if (this.shouldIncludePage(path, priorityPaths)) {
+                    try {
+                        const markdownPage = {
+                            path: metadata.path,
+                            title: metadata.title || path,
+                            content: "",
+                            metadata: {
+                                description: metadata.description,
+                                keywords: metadata.keywords
+                                    ? metadata.keywords.split(",").map((k) => k.trim())
+                                    : undefined,
+                                lastModified: new Date().toISOString(),
+                            },
+                        };
+                        keyPages.push(markdownPage);
+                    }
+                    catch (error) {
+                        console.warn(`⚠️ Failed to extract markdown from ${path}:`, error);
+                    }
                 }
             }
+            for (const page of keyPages) {
+                try {
+                    const fullUrl = new URL(page.path, websiteUrl).href;
+                    const content = await this.extractPageContent(fullUrl);
+                    page.content = content;
+                }
+                catch (error) {
+                    console.warn(`⚠️ Failed to extract content from ${page.path}:`, error);
+                    page.content = `# ${page.title}\n\nContent not available.`;
+                }
+            }
+            return keyPages;
         }
-        return keyPages;
+        catch (error) {
+            console.error("❌ Failed to extract key pages:", error);
+            throw new Error("Failed to crawl website for markdown generation");
+        }
     }
     getPriorityPaths() {
         return [
@@ -119,26 +129,23 @@ class MarkdownGeneratorService {
         }
         return true;
     }
-    async extractMarkdownPage(url, page) {
-        const path = new URL(url).pathname;
-        const title = page.metadata?.title || page.title || path;
-        let content = page.markdown || "";
-        if (!content && page.html) {
-            content = this.htmlToMarkdown(page.html);
+    async extractPageContent(url) {
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    "User-Agent": "TheLLMsTxt-Crawler/1.0",
+                },
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            const html = await response.text();
+            return this.htmlToMarkdown(html);
         }
-        const metadata = {
-            description: page.metadata?.description,
-            keywords: page.metadata?.keywords
-                ? page.metadata.keywords.split(",").map((k) => k.trim())
-                : undefined,
-            lastModified: page.metadata?.lastModified,
-        };
-        return {
-            path,
-            title,
-            content,
-            metadata,
-        };
+        catch (error) {
+            console.warn(`⚠️ Failed to extract content from ${url}:`, error);
+            return `# Page Content\n\nContent extraction failed.`;
+        }
     }
     htmlToMarkdown(html) {
         let markdown = html
@@ -206,7 +213,7 @@ class MarkdownGeneratorService {
         let summary = page.summary;
         if (!summary) {
             try {
-                const aiContent = await gemini_service_1.openRouterService.generateAIContent(page.path, page.content);
+                const aiContent = await ai_service_1.xaiService.generateAIContent(page.path, page.content);
                 summary = aiContent.summary;
             }
             catch { }

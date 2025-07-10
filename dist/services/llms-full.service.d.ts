@@ -1,8 +1,5 @@
 import { LLMsFullPayload, LLMsFullGenerationResponse } from "../types";
 export declare class LLMsFullService {
-    private apiKey;
-    private app;
-    constructor();
     generateLLMsFull(payload: LLMsFullPayload): Promise<LLMsFullGenerationResponse>;
     private extractAllPages;
     private extractPageData;

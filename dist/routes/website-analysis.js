@@ -1,8 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
-const firecrawl_service_1 = require("../services/firecrawl.service");
-const gemini_service_1 = require("../services/gemini.service");
+const web_crawler_service_1 = require("../services/web-crawler.service");
+const ai_service_1 = require("../services/ai.service");
 const types_1 = require("../types");
 const router = (0, express_1.Router)();
 const activeSessions = new Map();
@@ -22,6 +22,7 @@ router.post("/cancel-analysis", (req, res) => {
     if (controller) {
         controller.abort();
         activeSessions.delete(sessionId);
+        (0, ai_service_1.cleanupSessionRateLimiter)(sessionId);
         res.json({ success: true, message: "Analysis cancelled" });
     }
     else {
@@ -38,9 +39,8 @@ router.get("/analyze-website", async (req, res) => {
     const aiEnrichment = req.query.aiEnrichment === "true";
     const sessionId = req.query.sessionId;
     const abortController = new AbortController();
-    if (sessionId) {
+    if (sessionId)
         activeSessions.set(sessionId, abortController);
-    }
     const validationResult = types_1.WebsiteAnalysisRequestSchema.safeParse({
         url,
         bots,
@@ -55,72 +55,53 @@ router.get("/analyze-website", async (req, res) => {
             activeSessions.delete(sessionId);
         return;
     }
-    try {
-        res.write(`event: progress\ndata: ${JSON.stringify({
-            progress: 1,
-            message: "Starting extraction...",
-        })}\n\n`);
+    const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+    const checkCancellation = () => {
         if (abortController.signal.aborted) {
-            res.write(`event: cancelled\ndata: ${JSON.stringify({
-                message: "Analysis cancelled by user",
-            })}\n\n`);
+            sendEvent("cancelled", { message: "Analysis cancelled by user" });
             res.end();
             if (sessionId)
                 activeSessions.delete(sessionId);
-            return;
+            return true;
         }
+        return false;
+    };
+    try {
+        sendEvent("progress", { progress: 1, message: "Starting extraction..." });
+        if (checkCancellation())
+            return;
         let websiteData;
         let crawlProgress = 5;
-        let crawlHeartbeat;
-        const sendCrawlHeartbeat = () => {
+        const crawlHeartbeat = setInterval(() => {
             if (crawlProgress < 99) {
-                res.write(`event: progress\ndata: ${JSON.stringify({
+                sendEvent("progress", {
                     progress: crawlProgress,
-                    message: `Crawling website...`,
-                })}\n\n`);
+                    message: "Crawling website...",
+                });
                 crawlProgress += 3;
             }
-        };
-        crawlHeartbeat = setInterval(sendCrawlHeartbeat, 3000);
+        }, 3000);
         try {
-            websiteData = await firecrawl_service_1.firecrawlService.extractWebsiteData(url);
+            websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url);
         }
         finally {
             clearInterval(crawlHeartbeat);
         }
-        if (abortController.signal.aborted) {
-            res.write(`event: cancelled\ndata: ${JSON.stringify({
-                message: "Analysis cancelled by user",
-            })}\n\n`);
-            res.end();
-            if (sessionId)
-                activeSessions.delete(sessionId);
+        if (checkCancellation())
             return;
-        }
-        res.write(`event: progress\ndata: ${JSON.stringify({
-            progress: 99,
-            message: "Website data extracted",
-        })}\n\n`);
-        const pathSelections = firecrawl_service_1.firecrawlService.convertToPathSelections(websiteData.paths);
-        res.write(`event: progress\ndata: ${JSON.stringify({
-            progress: 60,
-            message: "Paths converted",
-        })}\n\n`);
+        sendEvent("progress", { progress: 99, message: "Website data extracted" });
+        const pathSelections = web_crawler_service_1.webCrawlerService.convertToPathSelections(websiteData.paths);
+        sendEvent("progress", { progress: 60, message: "Paths converted" });
         let aiGeneratedContent = [];
         let rateLimitHit = false;
         if (aiEnrichment) {
             const total = pathSelections.length;
             let completed = 0;
             for (const path of pathSelections) {
-                if (abortController.signal.aborted) {
-                    res.write(`event: cancelled\ndata: ${JSON.stringify({
-                        message: "Analysis cancelled by user",
-                    })}\n\n`);
-                    res.end();
-                    if (sessionId)
-                        activeSessions.delete(sessionId);
+                if (checkCancellation())
                     return;
-                }
                 try {
                     const meta = websiteData.pageMetadatas?.find((m) => m.path === path.path);
                     let content = "";
@@ -132,46 +113,37 @@ router.get("/analyze-website", async (req, res) => {
                         content += `Keywords: ${meta.keywords}\n`;
                     if (!content)
                         content = `Path: ${path.path}`;
-                    let ai;
-                    try {
-                        ai = await gemini_service_1.openRouterService.generateAIContent(path.path, content);
-                    }
-                    catch (error) {
-                        if (error instanceof Error &&
-                            error.message &&
-                            error.message.startsWith("RATE_LIMIT_REACHED:")) {
-                            res.write(`event: error\ndata: ${JSON.stringify({
-                                error: "AI rate limit reached. Please try again in a few minutes.",
-                                details: error.message,
-                            })}\n\n`);
-                            rateLimitHit = true;
-                            break;
-                        }
-                        else {
-                            console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
-                            continue;
-                        }
-                    }
+                    const ai = await ai_service_1.xaiService.generateAIContent(path.path, content, abortController.signal, sessionId);
                     if (meta && ai)
                         meta.summary = ai.summary;
                     if (ai)
                         aiGeneratedContent.push(ai);
                 }
                 catch (error) {
+                    if (error instanceof Error &&
+                        error.message?.startsWith("RATE_LIMIT_REACHED:")) {
+                        sendEvent("error", {
+                            error: "AI rate limit reached. Please try again in a few minutes.",
+                            details: error.message,
+                        });
+                        rateLimitHit = true;
+                        break;
+                    }
+                    console.warn(`⚠️ AI enrichment failed for path ${path.path}:`, error);
+                    continue;
                 }
                 completed++;
                 const percent = 99 + Math.round((completed / total) * 0.5);
-                res.write(`event: progress\ndata: ${JSON.stringify({
+                sendEvent("progress", {
                     progress: percent,
                     message: `AI enrichment: ${completed}/${total}`,
-                })}\n\n`);
-                await new Promise((resolve) => setTimeout(resolve, 10000));
+                });
             }
             if (!rateLimitHit) {
-                res.write(`event: progress\ndata: ${JSON.stringify({
+                sendEvent("progress", {
                     progress: 99.5,
                     message: "AI enrichment complete",
-                })}\n\n`);
+                });
             }
         }
         if (!aiEnrichment || !rateLimitHit) {
@@ -196,23 +168,22 @@ router.get("/analyze-website", async (req, res) => {
                 hasAiContent: !!response.aiGeneratedContent,
                 aiContentSample: response.aiGeneratedContent?.slice(0, 2),
             });
-            res.write(`event: result\ndata: ${JSON.stringify(response)}\n\n`);
-            res.write(`event: progress\ndata: ${JSON.stringify({
-                progress: 100,
-                message: "Analysis complete",
-            })}\n\n`);
+            sendEvent("result", response);
+            sendEvent("progress", { progress: 100, message: "Analysis complete" });
         }
         res.end();
     }
     catch (error) {
-        res.write(`event: error\ndata: ${JSON.stringify({
+        sendEvent("error", {
             error: error instanceof Error ? error.message : "Unknown error",
-        })}\n\n`);
+        });
         res.end();
     }
     finally {
-        if (sessionId)
+        if (sessionId) {
             activeSessions.delete(sessionId);
+            (0, ai_service_1.cleanupSessionRateLimiter)(sessionId);
+        }
     }
 });
 exports.default = router;

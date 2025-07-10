@@ -1,6 +1,6 @@
-import FirecrawlApp from "@mendable/firecrawl-js";
 import { LLMsFullPayload, LLMsFullGenerationResponse } from "../types";
-import { openRouterService } from "./gemini.service";
+import { xaiService } from "./ai.service";
+import { webCrawlerService } from "./web-crawler.service";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -19,16 +19,6 @@ interface FullPageData {
 }
 
 export class LLMsFullService {
-  private apiKey: string;
-  private app: FirecrawlApp;
-
-  constructor() {
-    this.apiKey = process.env.FIRECRAWL_API_KEY || "";
-    this.app = new FirecrawlApp({
-      apiKey: this.apiKey,
-    });
-  }
-
   /**
    * Generate comprehensive llms-full.txt content
    */
@@ -97,33 +87,106 @@ export class LLMsFullService {
   ): Promise<FullPageData[]> {
     console.log(`🕷️ Crawling website with max depth: ${maxDepth}`);
 
-    const crawlResult = await this.app.crawlUrl(url, {
-      limit: 100,
-      maxDepth,
-      scrapeOptions: {
-        formats: ["markdown", "html"],
-      },
-    });
+    try {
+      // Use the web crawler service directly to get the crawled data
+      const baseUrl = new URL(url).origin;
+      const discovered = new Set<string>();
+      const crawled = new Map<string, any>();
+      const toCrawl: [string, number][] = [[url, 0]];
+      let pages = 0;
+      const maxPages = 1000;
 
-    if (!crawlResult.success || !crawlResult.data) {
+      console.log(`🕷️ Starting direct crawl for ${url}`);
+
+      while (toCrawl.length && pages < maxPages) {
+        const [cur, depth] = toCrawl.shift()!;
+        if (discovered.has(cur) || depth > maxDepth) continue;
+        discovered.add(cur);
+        pages++;
+
+        console.log(
+          `📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`
+        );
+
+        try {
+          // Use the web crawler's crawlPage method directly
+          const baseDomain = new URL(baseUrl).hostname;
+          const res = await webCrawlerService.crawlPage(cur, baseDomain);
+          crawled.set(cur, res);
+
+          if (res.success) {
+            console.log(`✅ Successfully crawled: ${res.path}`);
+            console.log(`   Title: "${res.metadata.title}"`);
+            console.log(
+              `   Body content length: ${
+                res.metadata.bodyContent?.length || 0
+              } chars`
+            );
+
+            // Add discovered links to crawl queue
+            if (res.metadata.links) {
+              for (const link of res.metadata.links) {
+                try {
+                  const abs = new URL(link, baseUrl).href;
+                  if (
+                    new URL(abs).hostname === baseDomain &&
+                    !discovered.has(abs)
+                  ) {
+                    toCrawl.push([abs, depth + 1]);
+                  }
+                } catch {}
+              }
+            }
+          } else {
+            console.log(`❌ Failed to crawl: ${cur} - ${res.error}`);
+          }
+        } catch (error) {
+          console.log(`❌ Error crawling ${cur}:`, error);
+        }
+
+        await new Promise((r) => setTimeout(r, 500));
+      }
+
+      // Convert crawled data to FullPageData format
+      const pagesData: FullPageData[] = [];
+
+      console.log(`📋 Processing ${crawled.size} crawled pages`);
+
+      for (const [url, crawlResult] of crawled.entries()) {
+        if (crawlResult.success) {
+          const bodyContent = crawlResult.metadata.bodyContent || "";
+
+          console.log(`📄 Processing page: ${crawlResult.path}`);
+          console.log(`   Title: "${crawlResult.metadata.title}"`);
+          console.log(`   Body content length: ${bodyContent.length} chars`);
+          console.log(`   Body preview: "${bodyContent.substring(0, 100)}..."`);
+
+          const pageData: FullPageData = {
+            url: url,
+            path: crawlResult.path,
+            title: crawlResult.metadata.title || "Untitled",
+            content: bodyContent,
+            links: crawlResult.metadata.links || [],
+            description: crawlResult.metadata.description || "",
+            keywords: crawlResult.metadata.keywords
+              ? crawlResult.metadata.keywords
+                  .split(",")
+                  .map((k: string) => k.trim())
+              : [],
+            lastModified: new Date().toISOString(),
+          };
+          pagesData.push(pageData);
+        }
+      }
+
+      console.log(
+        `📋 Successfully extracted ${pagesData.length} pages with body content`
+      );
+      return pagesData;
+    } catch (error) {
+      console.error("❌ Failed to extract pages:", error);
       throw new Error("Failed to crawl website");
     }
-
-    const pagesData: FullPageData[] = [];
-
-    for (const page of crawlResult.data) {
-      const pageUrl = page.metadata?.sourceURL || page.metadata?.url;
-      if (!pageUrl) continue;
-
-      try {
-        const pageData = await this.extractPageData(pageUrl, page);
-        pagesData.push(pageData);
-      } catch (error) {
-        console.warn(`⚠️ Failed to extract data from ${pageUrl}:`, error);
-      }
-    }
-
-    return pagesData;
   }
 
   /**
@@ -226,7 +289,7 @@ export class LLMsFullService {
     let summary = (page as any).summary;
     if (options.aiEnrichment && !summary) {
       try {
-        const aiContent = await openRouterService.generateAIContent(
+        const aiContent = await xaiService.generateAIContent(
           page.path,
           page.content
         );
@@ -239,7 +302,7 @@ export class LLMsFullService {
     // Add AI enrichment if enabled
     if (options.aiEnrichment) {
       try {
-        const aiContent = await openRouterService.generateAIContent(
+        const aiContent = await xaiService.generateAIContent(
           page.path,
           page.content
         );

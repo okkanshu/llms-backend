@@ -8,6 +8,7 @@ import swaggerUi from "swagger-ui-express";
 import { LLM_BOT_CONFIGS } from "./types";
 import websiteAnalysisRoutes from "./routes/website-analysis";
 import llmsEnhancedRoutes from "./routes/llms-enhanced";
+import llmsGeneratorRoutes from "./routes/llms-generator";
 
 // Load environment variables
 dotenv.config();
@@ -140,6 +141,9 @@ app.use("/api", websiteAnalysisRoutes);
 // Enhanced LLMs routes
 app.use("/api", llmsEnhancedRoutes);
 
+// LLMs generator routes
+app.use("/api", llmsGeneratorRoutes);
+
 // Root endpoint
 app.get("/", (req, res) => {
   res.json({
@@ -152,11 +156,6 @@ app.get("/", (req, res) => {
       analyze_website: "/api/analyze-website",
       generate_llms_full: "/api/generate-llms-full",
       generate_markdown: "/api/generate-markdown",
-      llms_index: "/api/llms-index.json",
-      ai_enrich: "/api/ai-enrich",
-      hierarchical_structure: "/api/hierarchical-structure",
-      analytics: "/api/analytics",
-      webhook_regenerate: "/api/webhook/regenerate",
     },
     documentation: "/api-docs",
     features: {
@@ -196,11 +195,6 @@ app.use((req, res) => {
       "/api/analyze-website",
       "/api/generate-llms-full",
       "/api/generate-markdown",
-      "/api/llms-index.json",
-      "/api/ai-enrich",
-      "/api/hierarchical-structure",
-      "/api/analytics",
-      "/api/webhook/regenerate",
     ],
     documentation: "/api-docs",
   });
@@ -210,20 +204,6 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 TheLLMsTxt Backend server running on port ${PORT}`);
   console.log(`📊 Health check: http://localhost:${PORT}/health`);
-  console.log(`🤖 LLM Bots: http://localhost:${PORT}/api/llm-bots`);
-  console.log(
-    `🔍 Website Analysis: http://localhost:${PORT}/api/analyze-website`
-  );
-  console.log(
-    `📝 LLMs Full Generation: http://localhost:${PORT}/api/generate-llms-full`
-  );
-  console.log(
-    `📄 Markdown Generation: http://localhost:${PORT}/api/generate-markdown`
-  );
-  console.log(`🔗 LLMs Index: http://localhost:${PORT}/api/llms-index.json`);
-  console.log(`🧠 AI Enrichment: http://localhost:${PORT}/api/ai-enrich`);
-  console.log(`📊 Analytics: http://localhost:${PORT}/api/analytics`);
-  console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
 });
 
 export default app;

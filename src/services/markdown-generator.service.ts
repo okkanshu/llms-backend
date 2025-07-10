@@ -1,6 +1,6 @@
-import FirecrawlApp from "@mendable/firecrawl-js";
 import { MarkdownGenerationResponse } from "../types";
-import { openRouterService } from "./gemini.service";
+import { xaiService } from "./ai.service";
+import { webCrawlerService } from "./web-crawler.service";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -17,16 +17,6 @@ interface MarkdownPage {
 }
 
 export class MarkdownGeneratorService {
-  private apiKey: string;
-  private app: FirecrawlApp;
-
-  constructor() {
-    this.apiKey = process.env.FIRECRAWL_API_KEY || "";
-    this.app = new FirecrawlApp({
-      apiKey: this.apiKey,
-    });
-  }
-
   /**
    * Generate markdown versions of key pages
    */
@@ -67,39 +57,61 @@ export class MarkdownGeneratorService {
   private async extractKeyPages(websiteUrl: string): Promise<MarkdownPage[]> {
     console.log(`🔍 Extracting key pages from: ${websiteUrl}`);
 
-    const crawlResult = await this.app.crawlUrl(websiteUrl, {
-      limit: 50,
-      maxDepth: 2,
-      scrapeOptions: {
-        formats: ["markdown", "html"],
-      },
-    });
+    try {
+      // Use the web crawler service to get website data
+      const websiteData = await webCrawlerService.extractWebsiteData(
+        websiteUrl
+      );
 
-    if (!crawlResult.success || !crawlResult.data) {
-      throw new Error("Failed to crawl website for markdown generation");
-    }
+      const keyPages: MarkdownPage[] = [];
+      const priorityPaths = this.getPriorityPaths();
 
-    const keyPages: MarkdownPage[] = [];
-    const priorityPaths = this.getPriorityPaths();
+      // Convert page metadata to markdown pages
+      for (const metadata of websiteData.pageMetadatas) {
+        const path = metadata.path;
 
-    for (const page of crawlResult.data) {
-      const pageUrl = page.metadata?.sourceURL || page.metadata?.url;
-      if (!pageUrl) continue;
-
-      const path = new URL(pageUrl).pathname;
-
-      // Check if this is a priority path or should be included
-      if (this.shouldIncludePage(path, priorityPaths)) {
-        try {
-          const markdownPage = await this.extractMarkdownPage(pageUrl, page);
-          keyPages.push(markdownPage);
-        } catch (error) {
-          console.warn(`⚠️ Failed to extract markdown from ${pageUrl}:`, error);
+        // Check if this is a priority path or should be included
+        if (this.shouldIncludePage(path, priorityPaths)) {
+          try {
+            const markdownPage: MarkdownPage = {
+              path: metadata.path,
+              title: metadata.title || path,
+              content: "", // Will be filled by crawling individual pages
+              metadata: {
+                description: metadata.description,
+                keywords: metadata.keywords
+                  ? metadata.keywords.split(",").map((k) => k.trim())
+                  : undefined,
+                lastModified: new Date().toISOString(),
+              },
+            };
+            keyPages.push(markdownPage);
+          } catch (error) {
+            console.warn(`⚠️ Failed to extract markdown from ${path}:`, error);
+          }
         }
       }
-    }
 
-    return keyPages;
+      // For each key page, get the actual content
+      for (const page of keyPages) {
+        try {
+          const fullUrl = new URL(page.path, websiteUrl).href;
+          const content = await this.extractPageContent(fullUrl);
+          page.content = content;
+        } catch (error) {
+          console.warn(
+            `⚠️ Failed to extract content from ${page.path}:`,
+            error
+          );
+          page.content = `# ${page.title}\n\nContent not available.`;
+        }
+      }
+
+      return keyPages;
+    } catch (error) {
+      console.error("❌ Failed to extract key pages:", error);
+      throw new Error("Failed to crawl website for markdown generation");
+    }
   }
 
   /**
@@ -170,38 +182,26 @@ export class MarkdownGeneratorService {
   }
 
   /**
-   * Extract markdown content from a single page
+   * Extract content from a single page
    */
-  private async extractMarkdownPage(
-    url: string,
-    page: any
-  ): Promise<MarkdownPage> {
-    const path = new URL(url).pathname;
-    const title = page.metadata?.title || page.title || path;
+  private async extractPageContent(url: string): Promise<string> {
+    try {
+      const response = await fetch(url, {
+        headers: {
+          "User-Agent": "TheLLMsTxt-Crawler/1.0",
+        },
+      });
 
-    // Get markdown content
-    let content = page.markdown || "";
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
 
-    // If no markdown, convert HTML to markdown
-    if (!content && page.html) {
-      content = this.htmlToMarkdown(page.html);
+      const html = await response.text();
+      return this.htmlToMarkdown(html);
+    } catch (error) {
+      console.warn(`⚠️ Failed to extract content from ${url}:`, error);
+      return `# Page Content\n\nContent extraction failed.`;
     }
-
-    // Extract metadata
-    const metadata = {
-      description: page.metadata?.description,
-      keywords: page.metadata?.keywords
-        ? page.metadata.keywords.split(",").map((k: string) => k.trim())
-        : undefined,
-      lastModified: page.metadata?.lastModified,
-    };
-
-    return {
-      path,
-      title,
-      content,
-      metadata,
-    };
   }
 
   /**
@@ -330,7 +330,7 @@ export class MarkdownGeneratorService {
     let summary = (page as any).summary;
     if (!summary) {
       try {
-        const aiContent = await openRouterService.generateAIContent(
+        const aiContent = await xaiService.generateAIContent(
           page.path,
           page.content
         );
