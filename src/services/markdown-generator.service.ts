@@ -21,13 +21,14 @@ export class MarkdownGeneratorService {
    * Generate markdown versions of key pages
    */
   async generateMarkdownPages(
-    websiteUrl: string
+    websiteUrl: string,
+    signal?: AbortSignal
   ): Promise<MarkdownGenerationResponse> {
     try {
       console.log(`📝 Starting markdown generation for: ${websiteUrl}`);
 
       // Extract key pages
-      const keyPages = await this.extractKeyPages(websiteUrl);
+      const keyPages = await this.extractKeyPages(websiteUrl, signal);
 
       // Generate markdown files
       const files = await this.generateMarkdownFiles(keyPages, websiteUrl);
@@ -54,13 +55,18 @@ export class MarkdownGeneratorService {
   /**
    * Extract key pages from the website
    */
-  private async extractKeyPages(websiteUrl: string): Promise<MarkdownPage[]> {
+  private async extractKeyPages(
+    websiteUrl: string,
+    signal?: AbortSignal
+  ): Promise<MarkdownPage[]> {
     console.log(`🔍 Extracting key pages from: ${websiteUrl}`);
 
     try {
       // Use the web crawler service to get website data
       const websiteData = await webCrawlerService.extractWebsiteData(
-        websiteUrl
+        websiteUrl,
+        6,
+        signal
       );
 
       const keyPages: MarkdownPage[] = [];
@@ -94,9 +100,15 @@ export class MarkdownGeneratorService {
 
       // For each key page, get the actual content
       for (const page of keyPages) {
+        // Check for cancellation
+        if (signal?.aborted) {
+          console.log("🛑 Markdown generation cancelled by user");
+          throw new Error("CANCELLED");
+        }
+
         try {
           const fullUrl = new URL(page.path, websiteUrl).href;
-          const content = await this.extractPageContent(fullUrl);
+          const content = await this.extractPageContent(fullUrl, signal);
           page.content = content;
         } catch (error) {
           console.warn(
@@ -184,12 +196,16 @@ export class MarkdownGeneratorService {
   /**
    * Extract content from a single page
    */
-  private async extractPageContent(url: string): Promise<string> {
+  private async extractPageContent(
+    url: string,
+    signal?: AbortSignal
+  ): Promise<string> {
     try {
       const response = await fetch(url, {
         headers: {
           "User-Agent": "TheLLMsTxt-Crawler/1.0",
         },
+        signal,
       });
 
       if (!response.ok) {

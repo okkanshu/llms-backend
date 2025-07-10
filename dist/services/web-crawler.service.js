@@ -46,7 +46,7 @@ class WebCrawlerService {
         this.timeout = 10000;
         this.userAgent = "TheLLMsTxt-Crawler/1.0";
     }
-    async extractWebsiteData(url, maxDepth = 6) {
+    async extractWebsiteData(url, maxDepth = 6, signal) {
         console.log(`🕷️ Starting website extraction for: ${url}`);
         try {
             const baseUrl = this.normalizeUrl(url);
@@ -55,6 +55,10 @@ class WebCrawlerService {
             const discovered = new Set(), crawled = new Map(), toCrawl = [[baseUrl, 0]];
             let pages = 0;
             while (toCrawl.length && pages < this.maxPages) {
+                if (signal?.aborted) {
+                    console.log("🛑 Website extraction cancelled by user");
+                    throw new Error("CANCELLED");
+                }
                 const [cur, depth] = toCrawl.shift();
                 if (discovered.has(cur) || depth > maxDepth)
                     continue;
@@ -62,7 +66,7 @@ class WebCrawlerService {
                 pages++;
                 console.log(`📄 Crawling page ${pages}/${this.maxPages}: ${cur} (depth: ${depth})`);
                 try {
-                    const res = await this.crawlPage(cur, baseDomain);
+                    const res = await this.crawlPage(cur, baseDomain, signal);
                     crawled.set(cur, res);
                     if (res.success) {
                         console.log(`✅ Successfully crawled: ${res.path}`);
@@ -132,7 +136,7 @@ class WebCrawlerService {
             throw new Error(`Failed to extract website data: ${errorMsg}`);
         }
     }
-    async crawlPage(url, baseDomain) {
+    async crawlPage(url, baseDomain, signal) {
         try {
             console.log(`🌐 Fetching: ${url}`);
             const res = await axios_1.default.get(url, {
@@ -145,6 +149,7 @@ class WebCrawlerService {
                     Connection: "keep-alive",
                 },
                 maxRedirects: 5,
+                signal,
             });
             console.log(`📥 Response status: ${res.status}, Content length: ${res.data.length}`);
             const $ = cheerio.load(res.data);

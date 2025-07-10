@@ -9,10 +9,10 @@ const web_crawler_service_1 = require("./web-crawler.service");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 class MarkdownGeneratorService {
-    async generateMarkdownPages(websiteUrl) {
+    async generateMarkdownPages(websiteUrl, signal) {
         try {
             console.log(`📝 Starting markdown generation for: ${websiteUrl}`);
-            const keyPages = await this.extractKeyPages(websiteUrl);
+            const keyPages = await this.extractKeyPages(websiteUrl, signal);
             const files = await this.generateMarkdownFiles(keyPages, websiteUrl);
             console.log(`✅ Markdown generation completed:`, {
                 totalFiles: files.length,
@@ -32,10 +32,10 @@ class MarkdownGeneratorService {
             };
         }
     }
-    async extractKeyPages(websiteUrl) {
+    async extractKeyPages(websiteUrl, signal) {
         console.log(`🔍 Extracting key pages from: ${websiteUrl}`);
         try {
-            const websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(websiteUrl);
+            const websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(websiteUrl, 6, signal);
             const keyPages = [];
             const priorityPaths = this.getPriorityPaths();
             for (const metadata of websiteData.pageMetadatas) {
@@ -62,9 +62,13 @@ class MarkdownGeneratorService {
                 }
             }
             for (const page of keyPages) {
+                if (signal?.aborted) {
+                    console.log("🛑 Markdown generation cancelled by user");
+                    throw new Error("CANCELLED");
+                }
                 try {
                     const fullUrl = new URL(page.path, websiteUrl).href;
-                    const content = await this.extractPageContent(fullUrl);
+                    const content = await this.extractPageContent(fullUrl, signal);
                     page.content = content;
                 }
                 catch (error) {
@@ -129,12 +133,13 @@ class MarkdownGeneratorService {
         }
         return true;
     }
-    async extractPageContent(url) {
+    async extractPageContent(url, signal) {
         try {
             const response = await fetch(url, {
                 headers: {
                     "User-Agent": "TheLLMsTxt-Crawler/1.0",
                 },
+                signal,
             });
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${response.statusText}`);

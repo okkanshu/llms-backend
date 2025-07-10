@@ -84,7 +84,7 @@ router.get("/analyze-website", async (req, res) => {
             }
         }, 3000);
         try {
-            websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url);
+            websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal);
         }
         finally {
             clearInterval(crawlHeartbeat);

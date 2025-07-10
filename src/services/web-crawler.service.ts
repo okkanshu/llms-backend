@@ -43,7 +43,8 @@ export class WebCrawlerService {
 
   async extractWebsiteData(
     url: string,
-    maxDepth: number = 6
+    maxDepth: number = 6,
+    signal?: AbortSignal
   ): Promise<WebsiteData> {
     console.log(`🕷️ Starting website extraction for: ${url}`);
     try {
@@ -57,6 +58,12 @@ export class WebCrawlerService {
       let pages = 0;
 
       while (toCrawl.length && pages < this.maxPages) {
+        // Check for cancellation
+        if (signal?.aborted) {
+          console.log("🛑 Website extraction cancelled by user");
+          throw new Error("CANCELLED");
+        }
+
         const [cur, depth] = toCrawl.shift()!;
         if (discovered.has(cur) || depth > maxDepth) continue;
         discovered.add(cur);
@@ -67,7 +74,7 @@ export class WebCrawlerService {
         );
 
         try {
-          const res = await this.crawlPage(cur, baseDomain);
+          const res = await this.crawlPage(cur, baseDomain, signal);
           crawled.set(cur, res);
 
           if (res.success) {
@@ -150,7 +157,11 @@ export class WebCrawlerService {
     }
   }
 
-  async crawlPage(url: string, baseDomain: string): Promise<CrawlResult> {
+  async crawlPage(
+    url: string,
+    baseDomain: string,
+    signal?: AbortSignal
+  ): Promise<CrawlResult> {
     try {
       console.log(`🌐 Fetching: ${url}`);
       const res = await axios.get(url, {
@@ -164,6 +175,7 @@ export class WebCrawlerService {
           Connection: "keep-alive",
         },
         maxRedirects: 5,
+        signal,
       });
 
       console.log(

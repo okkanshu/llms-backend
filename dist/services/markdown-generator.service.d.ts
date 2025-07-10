@@ -1,6 +1,6 @@
 import { MarkdownGenerationResponse } from "../types";
 export declare class MarkdownGeneratorService {
-    generateMarkdownPages(websiteUrl: string): Promise<MarkdownGenerationResponse>;
+    generateMarkdownPages(websiteUrl: string, signal?: AbortSignal): Promise<MarkdownGenerationResponse>;
     private extractKeyPages;
     private getPriorityPaths;
     private shouldIncludePage;

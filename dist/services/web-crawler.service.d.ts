@@ -33,8 +33,8 @@ export declare class WebCrawlerService {
     private maxPages;
     private timeout;
     private userAgent;
-    extractWebsiteData(url: string, maxDepth?: number): Promise<WebsiteData>;
-    crawlPage(url: string, baseDomain: string): Promise<CrawlResult>;
+    extractWebsiteData(url: string, maxDepth?: number, signal?: AbortSignal): Promise<WebsiteData>;
+    crawlPage(url: string, baseDomain: string, signal?: AbortSignal): Promise<CrawlResult>;
     private extractMetadata;
     private normalizeUrl;
     private getPathFromUrl;
