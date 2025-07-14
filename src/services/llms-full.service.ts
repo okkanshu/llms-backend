@@ -55,7 +55,7 @@ export class LLMsFullService {
       });
 
       const totalWords = content.split(/\s+/).length;
-      const filename = `llms-full-${new Date().toISOString().slice(0, 10)}.txt`;
+      const filename = `llms-full.txt`;
 
       console.log(`✅ llms-full.txt generation completed:`, {
         totalPages: pagesData.length,
