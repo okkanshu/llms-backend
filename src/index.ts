@@ -9,6 +9,8 @@ import { LLM_BOT_CONFIGS } from "./types";
 import websiteAnalysisRoutes from "./routes/website-analysis";
 import llmsEnhancedRoutes from "./routes/llms-enhanced";
 import llmsGeneratorRoutes from "./routes/llms-generator";
+import contactRoutes from "./routes/contact";
+console.log("\uD83D\uDCAC contactRoutes type:", typeof contactRoutes);
 
 // Load environment variables
 dotenv.config();
@@ -143,6 +145,9 @@ app.use("/api", llmsEnhancedRoutes);
 
 // LLMs generator routes
 app.use("/api", llmsGeneratorRoutes);
+
+// Contact routes
+app.use("/api", contactRoutes);
 
 // Root endpoint
 app.get("/", (req, res) => {

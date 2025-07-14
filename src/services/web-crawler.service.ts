@@ -2,6 +2,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { URL } from "url";
 import { PathSelection } from "../types";
+import { chromium, Browser, Page } from "playwright";
 
 interface WebsiteData {
   title: string;
@@ -40,6 +41,8 @@ export class WebCrawlerService {
   private maxPages = 1000;
   private timeout = 10000;
   private userAgent = "TheLLMsTxt-Crawler/1.0";
+  private browser: Browser | null = null;
+  private page: Page | null = null;
 
   async extractWebsiteData(
     url: string,
@@ -54,7 +57,8 @@ export class WebCrawlerService {
 
       const discovered = new Set<string>(),
         crawled = new Map<string, CrawlResult>(),
-        toCrawl: [string, number][] = [[baseUrl, 0]];
+        toCrawl: [string, number][] = [[baseUrl, 0]],
+        scrapedUrls: string[] = []; // Temporary array to track already scraped URLs
       let pages = 0;
 
       while (toCrawl.length && pages < this.maxPages) {
@@ -67,6 +71,7 @@ export class WebCrawlerService {
         const [cur, depth] = toCrawl.shift()!;
         if (discovered.has(cur) || depth > maxDepth) continue;
         discovered.add(cur);
+        scrapedUrls.push(cur); // Add to temporary array
         pages++;
 
         console.log(
@@ -94,7 +99,8 @@ export class WebCrawlerService {
                   const abs = new URL(link, baseUrl).href;
                   if (
                     new URL(abs).hostname === baseDomain &&
-                    !discovered.has(abs)
+                    !discovered.has(abs) &&
+                    !scrapedUrls.includes(abs) // Check against temporary array
                   )
                     toCrawl.push([abs, depth + 1]);
                 } catch {}
@@ -364,13 +370,15 @@ export class WebCrawlerService {
 
       const discovered = new Set<string>(),
         crawled = new Map<string, CrawlResult>(),
-        toCrawl: [string, number][] = [[baseUrl, 0]];
+        toCrawl: [string, number][] = [[baseUrl, 0]],
+        scrapedUrls: string[] = []; // Temporary array to track already scraped URLs
       let pages = 0;
 
       while (toCrawl.length && pages < this.maxPages) {
         const [cur, depth] = toCrawl.shift()!;
         if (discovered.has(cur) || depth > maxDepth) continue;
         discovered.add(cur);
+        scrapedUrls.push(cur); // Add to temporary array
         pages++;
 
         console.log(
@@ -396,7 +404,8 @@ export class WebCrawlerService {
                   const abs = new URL(link, baseUrl).href;
                   if (
                     new URL(abs).hostname === baseDomain &&
-                    !discovered.has(abs)
+                    !discovered.has(abs) &&
+                    !scrapedUrls.includes(abs) // Check against temporary array
                   )
                     toCrawl.push([abs, depth + 1]);
                 } catch {}
@@ -492,6 +501,256 @@ export class WebCrawlerService {
     console.log(`📖 Body text preview: "${finalText.substring(0, 100)}..."`);
 
     return finalText;
+  }
+
+  // Helper function to delay Playwright requests
+  private async delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Initialize Playwright browser singleton
+  private async getPlaywrightBrowser(): Promise<Browser> {
+    if (!this.browser) {
+      console.log(`🚀 Initializing Playwright browser...`);
+      this.browser = await chromium.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+    }
+    return this.browser;
+  }
+
+  // Get or create Playwright page
+  private async getPlaywrightPage(): Promise<Page> {
+    if (!this.page) {
+      const browser = await this.getPlaywrightBrowser();
+      this.page = await browser.newPage();
+      await this.page.setExtraHTTPHeaders({ "User-Agent": this.userAgent });
+      await this.page.setViewportSize({ width: 1280, height: 720 });
+    }
+    return this.page;
+  }
+
+  // Enhanced scraping with Playwright fallback
+  async scrapePage(url: string): Promise<{
+    title: string;
+    description: string;
+    keywords: string;
+    bodySnippet: string;
+  }> {
+    console.log(`🌐 Starting enhanced scraping for: ${url}`);
+
+    try {
+      // First attempt: Cheerio (fast path)
+      console.log(`⚡ Attempting Cheerio scraping...`);
+      const cheerioResult = await this.scrapeWithCheerio(url);
+
+      // Check if content is sufficient
+      const isContentSufficient = this.isContentSufficient(cheerioResult);
+
+      if (isContentSufficient) {
+        console.log(`✅ Cheerio scraping successful - content sufficient`);
+        return cheerioResult;
+      }
+
+      // Fallback to Playwright
+      console.log(
+        `⚠️ [warning] Falling back to Playwright: heavy page detected`
+      );
+      console.log(`🎭 Attempting Playwright scraping...`);
+
+      // Add delay for human-like access
+      const delayMs = Math.floor(Math.random() * 3000) + 2000; // 2-5 seconds
+      console.log(`⏱️ Adding ${delayMs}ms delay for rate limiting...`);
+      await this.delay(delayMs);
+
+      const playwrightResult = await this.scrapeWithPlaywright(url);
+      console.log(`✅ Playwright scraping completed`);
+
+      return playwrightResult;
+    } catch (error) {
+      console.log(`❌ Enhanced scraping failed: ${error}`);
+      return {
+        title: "",
+        description: "",
+        keywords: "",
+        bodySnippet: "",
+      };
+    }
+  }
+
+  // Scrape with Cheerio (existing logic)
+  private async scrapeWithCheerio(url: string): Promise<{
+    title: string;
+    description: string;
+    keywords: string;
+    bodySnippet: string;
+  }> {
+    const res = await axios.get(url, {
+      timeout: this.timeout,
+      headers: {
+        "User-Agent": this.userAgent,
+        Accept:
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Accept-Encoding": "gzip, deflate",
+        Connection: "keep-alive",
+      },
+      maxRedirects: 5,
+    });
+
+    const $ = cheerio.load(res.data);
+
+    const title =
+      $("title").text().trim() ||
+      $("h1").first().text().trim() ||
+      $('meta[property="og:title"]').attr("content") ||
+      "";
+
+    const description =
+      $('meta[name="description"]').attr("content") ||
+      $('meta[property="og:description"]').attr("content") ||
+      $("p").first().text().trim().substring(0, 160) ||
+      "";
+
+    const keywords = $('meta[name="keywords"]').attr("content") || "";
+
+    // Extract body content
+    $("script, style, noscript, iframe, svg").remove();
+    const bodyText = $("body").text();
+    const cleanedText = bodyText
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    const bodySnippet = cleanedText.slice(0, 30000);
+
+    return { title, description, keywords, bodySnippet };
+  }
+
+  // Scrape with Playwright (for dynamic content)
+  private async scrapeWithPlaywright(url: string): Promise<{
+    title: string;
+    description: string;
+    keywords: string;
+    bodySnippet: string;
+  }> {
+    const page = await this.getPlaywrightPage();
+
+    try {
+      await page.goto(url, {
+        waitUntil: "networkidle",
+        timeout: this.timeout,
+      });
+
+      // Wait for content to load
+      await page.waitForTimeout(2000);
+
+      // Extract metadata using the same logic as Cheerio
+      const title = await page.evaluate(() => {
+        const titleEl = document.querySelector("title");
+        const h1El = document.querySelector("h1");
+        const ogTitleEl = document.querySelector('meta[property="og:title"]');
+
+        return (
+          titleEl?.textContent?.trim() ||
+          h1El?.textContent?.trim() ||
+          ogTitleEl?.getAttribute("content") ||
+          ""
+        );
+      });
+
+      const description = await page.evaluate(() => {
+        const descEl = document.querySelector('meta[name="description"]');
+        const ogDescEl = document.querySelector(
+          'meta[property="og:description"]'
+        );
+        const firstP = document.querySelector("p");
+
+        return (
+          descEl?.getAttribute("content") ||
+          ogDescEl?.getAttribute("content") ||
+          firstP?.textContent?.trim().substring(0, 160) ||
+          ""
+        );
+      });
+
+      const keywords = await page.evaluate(() => {
+        const keywordsEl = document.querySelector('meta[name="keywords"]');
+        return keywordsEl?.getAttribute("content") || "";
+      });
+
+      // Extract body content
+      const bodySnippet = await page.evaluate(() => {
+        // Remove script, style, noscript, iframe, svg elements
+        const elementsToRemove = document.querySelectorAll(
+          "script, style, noscript, iframe, svg"
+        );
+        elementsToRemove.forEach((el) => el.remove());
+
+        const bodyText = document.body?.textContent || "";
+        const cleanedText = bodyText
+          .replace(/[ \t]+/g, " ")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+
+        return cleanedText.slice(0, 30000);
+      });
+
+      return { title, description, keywords, bodySnippet };
+    } catch (error) {
+      console.log(`❌ Playwright scraping failed: ${error}`);
+      return {
+        title: "",
+        description: "",
+        keywords: "",
+        bodySnippet: "",
+      };
+    }
+  }
+
+  // Check if content is sufficient (detection logic)
+  private isContentSufficient(result: {
+    title: string;
+    description: string;
+    keywords: string;
+    bodySnippet: string;
+  }): boolean {
+    const hasTitle = result.title.length > 0;
+    const hasDescription = result.description.length > 0;
+    const hasBodyContent = result.bodySnippet.length >= 1000;
+
+    // Fallback to Playwright if all are empty or body content is too short
+    const needsFallback = !hasTitle && !hasDescription && !hasBodyContent;
+
+    console.log(`🔍 Content sufficiency check:`);
+    console.log(
+      `   Title: ${hasTitle ? "✅" : "❌"} (${result.title.length} chars)`
+    );
+    console.log(
+      `   Description: ${hasDescription ? "✅" : "❌"} (${
+        result.description.length
+      } chars)`
+    );
+    console.log(
+      `   Body content: ${hasBodyContent ? "✅" : "❌"} (${
+        result.bodySnippet.length
+      } chars)`
+    );
+    console.log(`   Needs fallback: ${needsFallback ? "Yes" : "No"}`);
+
+    return !needsFallback;
+  }
+
+  // Cleanup Playwright resources
+  async cleanup(): Promise<void> {
+    if (this.page) {
+      await this.page.close();
+      this.page = null;
+    }
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+    }
   }
 }
 
