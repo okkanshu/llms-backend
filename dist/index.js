@@ -14,6 +14,8 @@ const types_1 = require("./types");
 const website_analysis_1 = __importDefault(require("./routes/website-analysis"));
 const llms_enhanced_1 = __importDefault(require("./routes/llms-enhanced"));
 const llms_generator_1 = __importDefault(require("./routes/llms-generator"));
+const contact_1 = __importDefault(require("./routes/contact"));
+console.log("\uD83D\uDCAC contactRoutes type:", typeof contact_1.default);
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 8000;
@@ -118,6 +120,7 @@ app.use("/api-docs", swagger_ui_express_1.default.serve, swagger_ui_express_1.de
 app.use("/api", website_analysis_1.default);
 app.use("/api", llms_enhanced_1.default);
 app.use("/api", llms_generator_1.default);
+app.use("/api", contact_1.default);
 app.get("/", (req, res) => {
     res.json({
         success: true,
