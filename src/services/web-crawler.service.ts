@@ -2,7 +2,6 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { URL } from "url";
 import { PathSelection } from "../types";
-import { chromium, Browser, Page } from "playwright";
 
 interface WebsiteData {
   title: string;
@@ -41,20 +40,10 @@ export class WebCrawlerService {
   private maxPages = 1000;
   private timeout = 10000;
   private userAgent = "TheLLMsTxt-Crawler/1.0";
-  private browser: Browser | null = null;
-  private page: Page | null = null;
   private rateLimiter = {
     lastRequestTime: 0,
     requestsPerSecond: 25,
     minInterval: 1000 / 25, // 40ms between requests
-  };
-
-  private playwrightRateLimiter = {
-    lastRequestTime: 0,
-    requestsPerMinute: 25, // 20-30 per minute
-    minInterval: 60000 / 25, // 2.4 seconds minimum
-    maxConcurrentTabs: 2, // 1-3 concurrent tabs
-    activeTabs: 0,
   };
 
   async extractWebsiteData(
@@ -519,87 +508,23 @@ export class WebCrawlerService {
     return finalText;
   }
 
-  // Helper function to delay Playwright requests
-  private async delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  // Initialize Playwright browser singleton
-  private async getPlaywrightBrowser(): Promise<Browser> {
-    if (!this.browser) {
-      console.log(`🚀 Initializing Playwright browser...`);
-      this.browser = await chromium.launch({
-        headless: true,
-        args: ["--no-sandbox", "--disable-setuid-sandbox"],
-      });
-    }
-    return this.browser;
-  }
-
-  // Get or create Playwright page
-  private async getPlaywrightPage(): Promise<Page> {
-    // Check concurrent tabs limit
-    if (
-      this.playwrightRateLimiter.activeTabs >=
-      this.playwrightRateLimiter.maxConcurrentTabs
-    ) {
-      console.log(
-        `⏱️ Playwright rate limiting: waiting for available tab slot`
-      );
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      return this.getPlaywrightPage(); // Retry
-    }
-
-    this.playwrightRateLimiter.activeTabs++;
-
-    if (!this.page) {
-      const browser = await this.getPlaywrightBrowser();
-      this.page = await browser.newPage();
-      await this.page.setExtraHTTPHeaders({ "User-Agent": this.userAgent });
-      await this.page.setViewportSize({ width: 1280, height: 720 });
-    }
-    return this.page;
-  }
-
-  // Enhanced scraping with Playwright fallback
+  // Enhanced scraping with Cheerio only
   async scrapePage(url: string): Promise<{
     title: string;
     description: string;
     keywords: string;
     bodySnippet: string;
   }> {
-    console.log(`🌐 Starting enhanced scraping for: ${url}`);
+    console.log(`🌐 Starting scraping for: ${url}`);
 
     try {
-      // First attempt: Cheerio (fast path)
+      // Use Cheerio scraping
       console.log(`⚡ Attempting Cheerio scraping...`);
       const cheerioResult = await this.scrapeWithCheerio(url);
-
-      // Check if content is sufficient
-      const isContentSufficient = this.isContentSufficient(cheerioResult);
-
-      if (isContentSufficient) {
-        console.log(`✅ Cheerio scraping successful - content sufficient`);
-        return cheerioResult;
-      }
-
-      // Fallback to Playwright
-      console.log(
-        `⚠️ [warning] Falling back to Playwright: heavy page detected`
-      );
-      console.log(`🎭 Attempting Playwright scraping...`);
-
-      // Add delay for human-like access
-      const delayMs = Math.floor(Math.random() * 3000) + 2000; // 2-5 seconds
-      console.log(`⏱️ Adding ${delayMs}ms delay for rate limiting...`);
-      await this.delay(delayMs);
-
-      const playwrightResult = await this.scrapeWithPlaywright(url);
-      console.log(`✅ Playwright scraping completed`);
-
-      return playwrightResult;
+      console.log(`✅ Cheerio scraping completed`);
+      return cheerioResult;
     } catch (error) {
-      console.log(`❌ Enhanced scraping failed: ${error}`);
+      console.log(`❌ Scraping failed: ${error}`);
       return {
         title: "",
         description: "",
@@ -660,129 +585,6 @@ export class WebCrawlerService {
     return { title, description, keywords, bodySnippet };
   }
 
-  // Scrape with Playwright (for dynamic content)
-  private async scrapeWithPlaywright(url: string): Promise<{
-    title: string;
-    description: string;
-    keywords: string;
-    bodySnippet: string;
-  }> {
-    // Rate limiting for playwright requests
-    await this.enforcePlaywrightRateLimit();
-
-    const page = await this.getPlaywrightPage();
-
-    try {
-      await page.goto(url, {
-        waitUntil: "networkidle",
-        timeout: this.timeout,
-      });
-
-      // Wait for content to load
-      await page.waitForTimeout(2000);
-
-      // Extract metadata using the same logic as Cheerio
-      const title = await page.evaluate(() => {
-        const titleEl = document.querySelector("title");
-        const h1El = document.querySelector("h1");
-        const ogTitleEl = document.querySelector('meta[property="og:title"]');
-
-        return (
-          titleEl?.textContent?.trim() ||
-          h1El?.textContent?.trim() ||
-          ogTitleEl?.getAttribute("content") ||
-          ""
-        );
-      });
-
-      const description = await page.evaluate(() => {
-        const descEl = document.querySelector('meta[name="description"]');
-        const ogDescEl = document.querySelector(
-          'meta[property="og:description"]'
-        );
-        const firstP = document.querySelector("p");
-
-        return (
-          descEl?.getAttribute("content") ||
-          ogDescEl?.getAttribute("content") ||
-          firstP?.textContent?.trim().substring(0, 160) ||
-          ""
-        );
-      });
-
-      const keywords = await page.evaluate(() => {
-        const keywordsEl = document.querySelector('meta[name="keywords"]');
-        return keywordsEl?.getAttribute("content") || "";
-      });
-
-      // Extract body content
-      const bodySnippet = await page.evaluate(() => {
-        // Remove script, style, noscript, iframe, svg elements
-        const elementsToRemove = document.querySelectorAll(
-          "script, style, noscript, iframe, svg"
-        );
-        elementsToRemove.forEach((el) => el.remove());
-
-        const bodyText = document.body?.textContent || "";
-        const cleanedText = bodyText
-          .replace(/[ \t]+/g, " ")
-          .replace(/\n{3,}/g, "\n\n")
-          .trim();
-
-        return cleanedText.slice(0, 30000);
-      });
-
-      return { title, description, keywords, bodySnippet };
-    } catch (error) {
-      console.log(`❌ Playwright scraping failed: ${error}`);
-      return {
-        title: "",
-        description: "",
-        keywords: "",
-        bodySnippet: "",
-      };
-    } finally {
-      // Release tab slot
-      this.playwrightRateLimiter.activeTabs = Math.max(
-        0,
-        this.playwrightRateLimiter.activeTabs - 1
-      );
-    }
-  }
-
-  // Check if content is sufficient (detection logic)
-  private isContentSufficient(result: {
-    title: string;
-    description: string;
-    keywords: string;
-    bodySnippet: string;
-  }): boolean {
-    const hasTitle = result.title.length > 0;
-    const hasDescription = result.description.length > 0;
-    const hasBodyContent = result.bodySnippet.length >= 1000;
-
-    // Fallback to Playwright if all are empty or body content is too short
-    const needsFallback = !hasTitle && !hasDescription && !hasBodyContent;
-
-    console.log(`🔍 Content sufficiency check:`);
-    console.log(
-      `   Title: ${hasTitle ? "✅" : "❌"} (${result.title.length} chars)`
-    );
-    console.log(
-      `   Description: ${hasDescription ? "✅" : "❌"} (${
-        result.description.length
-      } chars)`
-    );
-    console.log(
-      `   Body content: ${hasBodyContent ? "✅" : "❌"} (${
-        result.bodySnippet.length
-      } chars)`
-    );
-    console.log(`   Needs fallback: ${needsFallback ? "Yes" : "No"}`);
-
-    return !needsFallback;
-  }
-
   // Rate limiting enforcement
   private async enforceRateLimit(): Promise<void> {
     const now = Date.now();
@@ -795,39 +597,6 @@ export class WebCrawlerService {
     }
 
     this.rateLimiter.lastRequestTime = Date.now();
-  }
-
-  // Playwright rate limiting enforcement
-  private async enforcePlaywrightRateLimit(): Promise<void> {
-    const now = Date.now();
-    const timeSinceLastRequest =
-      now - this.playwrightRateLimiter.lastRequestTime;
-
-    if (timeSinceLastRequest < this.playwrightRateLimiter.minInterval) {
-      const delay =
-        this.playwrightRateLimiter.minInterval - timeSinceLastRequest;
-      console.log(`⏱️ Playwright rate limiting: waiting ${delay}ms`);
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
-
-    // Add random delay between 2-6 seconds
-    const randomDelay = Math.floor(Math.random() * 4000) + 2000; // 2-6 seconds
-    console.log(`⏱️ Playwright random delay: ${randomDelay}ms`);
-    await new Promise((resolve) => setTimeout(resolve, randomDelay));
-
-    this.playwrightRateLimiter.lastRequestTime = Date.now();
-  }
-
-  // Cleanup Playwright resources
-  async cleanup(): Promise<void> {
-    if (this.page) {
-      await this.page.close();
-      this.page = null;
-    }
-    if (this.browser) {
-      await this.browser.close();
-      this.browser = null;
-    }
   }
 }
 
