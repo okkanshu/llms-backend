@@ -6,9 +6,27 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.llmsFullService = exports.LLMsFullService = void 0;
 const ai_service_1 = require("./ai.service");
 const web_crawler_service_1 = require("./web-crawler.service");
+const playwright_1 = require("playwright");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 class LLMsFullService {
+    constructor() {
+        this.rateLimiter = {
+            lastRequestTime: 0,
+            requestsPerSecond: 25,
+            minInterval: 1000 / 25,
+        };
+        this.playwrightRateLimiter = {
+            lastRequestTime: 0,
+            requestsPerMinute: 25,
+            minInterval: 60000 / 25,
+            maxConcurrentTabs: 2,
+            activeTabs: 0,
+        };
+        this.browser = null;
+        this.page = null;
+        this.userAgent = "TheLLMsTxt-Crawler/1.0";
+    }
     async generateLLMsFull(payload) {
         try {
             console.log(`🔍 Starting llms-full.txt generation for: ${payload.websiteUrl}`);
@@ -65,6 +83,7 @@ class LLMsFullService {
                 pages++;
                 console.log(`📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`);
                 try {
+                    await this.enforceRateLimit();
                     const baseDomain = new URL(baseUrl).hostname;
                     const res = await web_crawler_service_1.webCrawlerService.crawlPage(cur, baseDomain);
                     crawled.set(cur, res);
@@ -257,6 +276,168 @@ class LLMsFullService {
         catch (error) {
             console.error("❌ Sitemap overview generation failed:", error);
             return `# Site Overview\nError generating overview: ${error instanceof Error ? error.message : "Unknown error"}`;
+        }
+    }
+    async enforceRateLimit() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.rateLimiter.lastRequestTime;
+        if (timeSinceLastRequest < this.rateLimiter.minInterval) {
+            const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
+            console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        this.rateLimiter.lastRequestTime = Date.now();
+    }
+    async enforcePlaywrightRateLimit() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.playwrightRateLimiter.lastRequestTime;
+        if (timeSinceLastRequest < this.playwrightRateLimiter.minInterval) {
+            const delay = this.playwrightRateLimiter.minInterval - timeSinceLastRequest;
+            console.log(`⏱️ Playwright rate limiting: waiting ${delay}ms`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        const randomDelay = Math.floor(Math.random() * 4000) + 2000;
+        console.log(`⏱️ Playwright random delay: ${randomDelay}ms`);
+        await new Promise((resolve) => setTimeout(resolve, randomDelay));
+        this.playwrightRateLimiter.lastRequestTime = Date.now();
+    }
+    async getPlaywrightBrowser() {
+        if (!this.browser) {
+            console.log(`🚀 Initializing Playwright browser...`);
+            this.browser = await playwright_1.chromium.launch({
+                headless: true,
+                args: ["--no-sandbox", "--disable-setuid-sandbox"],
+            });
+        }
+        return this.browser;
+    }
+    async getPlaywrightPage() {
+        if (this.playwrightRateLimiter.activeTabs >=
+            this.playwrightRateLimiter.maxConcurrentTabs) {
+            console.log(`⏱️ Playwright rate limiting: waiting for available tab slot`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            return this.getPlaywrightPage();
+        }
+        this.playwrightRateLimiter.activeTabs++;
+        if (!this.page) {
+            const browser = await this.getPlaywrightBrowser();
+            this.page = await browser.newPage();
+            await this.page.setExtraHTTPHeaders({ "User-Agent": this.userAgent });
+            await this.page.setViewportSize({ width: 1280, height: 720 });
+        }
+        return this.page;
+    }
+    async scrapeWithPlaywright(url) {
+        await this.enforcePlaywrightRateLimit();
+        const page = await this.getPlaywrightPage();
+        try {
+            await page.goto(url, {
+                waitUntil: "networkidle",
+                timeout: 10000,
+            });
+            await page.waitForTimeout(2000);
+            const title = await page.evaluate(() => {
+                const titleEl = document.querySelector("title");
+                const h1El = document.querySelector("h1");
+                const ogTitleEl = document.querySelector('meta[property="og:title"]');
+                return (titleEl?.textContent?.trim() ||
+                    h1El?.textContent?.trim() ||
+                    ogTitleEl?.getAttribute("content") ||
+                    "");
+            });
+            const description = await page.evaluate(() => {
+                const descEl = document.querySelector('meta[name="description"]');
+                const ogDescEl = document.querySelector('meta[property="og:description"]');
+                const firstP = document.querySelector("p");
+                return (descEl?.getAttribute("content") ||
+                    ogDescEl?.getAttribute("content") ||
+                    firstP?.textContent?.trim().substring(0, 160) ||
+                    "");
+            });
+            const keywords = await page.evaluate(() => {
+                const keywordsEl = document.querySelector('meta[name="keywords"]');
+                return keywordsEl?.getAttribute("content") || "";
+            });
+            const bodySnippet = await page.evaluate(() => {
+                const elementsToRemove = document.querySelectorAll("script, style, noscript, iframe, svg");
+                elementsToRemove.forEach((el) => el.remove());
+                const bodyText = document.body?.textContent || "";
+                const cleanedText = bodyText
+                    .replace(/[ \t]+/g, " ")
+                    .replace(/\n{3,}/g, "\n\n")
+                    .trim();
+                return cleanedText.slice(0, 30000);
+            });
+            return { title, description, keywords, bodySnippet };
+        }
+        catch (error) {
+            console.log(`❌ Playwright scraping failed: ${error}`);
+            return {
+                title: "",
+                description: "",
+                keywords: "",
+                bodySnippet: "",
+            };
+        }
+        finally {
+            this.playwrightRateLimiter.activeTabs = Math.max(0, this.playwrightRateLimiter.activeTabs - 1);
+        }
+    }
+    async scrapePage(url) {
+        console.log(`🌐 Starting enhanced scraping for: ${url}`);
+        try {
+            console.log(`⚡ Attempting web crawler service...`);
+            const baseDomain = new URL(url).hostname;
+            const cheerioResult = await web_crawler_service_1.webCrawlerService.crawlPage(url, baseDomain);
+            if (cheerioResult.success) {
+                const result = {
+                    title: cheerioResult.metadata.title || "",
+                    description: cheerioResult.metadata.description || "",
+                    keywords: cheerioResult.metadata.keywords || "",
+                    bodySnippet: cheerioResult.metadata.bodyContent || "",
+                };
+                const isContentSufficient = this.isContentSufficient(result);
+                if (isContentSufficient) {
+                    console.log(`✅ Web crawler service successful - content sufficient`);
+                    return result;
+                }
+            }
+            console.log(`⚠️ [warning] Falling back to Playwright: heavy page detected`);
+            console.log(`🎭 Attempting Playwright scraping...`);
+            const playwrightResult = await this.scrapeWithPlaywright(url);
+            console.log(`✅ Playwright scraping completed`);
+            return playwrightResult;
+        }
+        catch (error) {
+            console.log(`❌ Enhanced scraping failed: ${error}`);
+            return {
+                title: "",
+                description: "",
+                keywords: "",
+                bodySnippet: "",
+            };
+        }
+    }
+    isContentSufficient(result) {
+        const hasTitle = result.title.length > 0;
+        const hasDescription = result.description.length > 0;
+        const hasBodyContent = result.bodySnippet.length >= 1000;
+        const needsFallback = !hasTitle && !hasDescription && !hasBodyContent;
+        console.log(`🔍 Content sufficiency check:`);
+        console.log(`   Title: ${hasTitle ? "✅" : "❌"} (${result.title.length} chars)`);
+        console.log(`   Description: ${hasDescription ? "✅" : "❌"} (${result.description.length} chars)`);
+        console.log(`   Body content: ${hasBodyContent ? "✅" : "❌"} (${result.bodySnippet.length} chars)`);
+        console.log(`   Needs fallback: ${needsFallback ? "Yes" : "No"}`);
+        return !needsFallback;
+    }
+    async cleanup() {
+        if (this.page) {
+            await this.page.close();
+            this.page = null;
+        }
+        if (this.browser) {
+            await this.browser.close();
+            this.browser = null;
         }
     }
     groupPagesByDepth(pages) {

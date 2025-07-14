@@ -9,6 +9,13 @@ const web_crawler_service_1 = require("./web-crawler.service");
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 class MarkdownGeneratorService {
+    constructor() {
+        this.rateLimiter = {
+            lastRequestTime: 0,
+            requestsPerSecond: 25,
+            minInterval: 1000 / 25,
+        };
+    }
     async generateMarkdownPages(websiteUrl, signal) {
         try {
             console.log(`📝 Starting markdown generation for: ${websiteUrl}`);
@@ -67,6 +74,7 @@ class MarkdownGeneratorService {
                     throw new Error("CANCELLED");
                 }
                 try {
+                    await this.enforceRateLimit();
                     const fullUrl = new URL(page.path, websiteUrl).href;
                     const content = await this.extractPageContent(fullUrl, signal);
                     page.content = content;
@@ -268,6 +276,16 @@ class MarkdownGeneratorService {
             console.error("❌ Markdown sitemap generation failed:", error);
             return `# Site Map\nError generating sitemap: ${error instanceof Error ? error.message : "Unknown error"}`;
         }
+    }
+    async enforceRateLimit() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.rateLimiter.lastRequestTime;
+        if (timeSinceLastRequest < this.rateLimiter.minInterval) {
+            const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
+            console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        this.rateLimiter.lastRequestTime = Date.now();
     }
     groupPagesBySection(pages) {
         const sections = {

@@ -35,6 +35,8 @@ export declare class WebCrawlerService {
     private userAgent;
     private browser;
     private page;
+    private rateLimiter;
+    private playwrightRateLimiter;
     extractWebsiteData(url: string, maxDepth?: number, signal?: AbortSignal): Promise<WebsiteData>;
     crawlPage(url: string, baseDomain: string, signal?: AbortSignal): Promise<CrawlResult>;
     private extractMetadata;
@@ -63,6 +65,8 @@ export declare class WebCrawlerService {
     private scrapeWithCheerio;
     private scrapeWithPlaywright;
     private isContentSufficient;
+    private enforceRateLimit;
+    private enforcePlaywrightRateLimit;
     cleanup(): Promise<void>;
 }
 export declare const webCrawlerService: WebCrawlerService;

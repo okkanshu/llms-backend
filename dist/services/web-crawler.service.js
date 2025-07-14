@@ -48,6 +48,18 @@ class WebCrawlerService {
         this.userAgent = "TheLLMsTxt-Crawler/1.0";
         this.browser = null;
         this.page = null;
+        this.rateLimiter = {
+            lastRequestTime: 0,
+            requestsPerSecond: 25,
+            minInterval: 1000 / 25,
+        };
+        this.playwrightRateLimiter = {
+            lastRequestTime: 0,
+            requestsPerMinute: 25,
+            minInterval: 60000 / 25,
+            maxConcurrentTabs: 2,
+            activeTabs: 0,
+        };
     }
     async extractWebsiteData(url, maxDepth = 6, signal) {
         console.log(`🕷️ Starting website extraction for: ${url}`);
@@ -143,6 +155,7 @@ class WebCrawlerService {
     }
     async crawlPage(url, baseDomain, signal) {
         try {
+            await this.enforceRateLimit();
             console.log(`🌐 Fetching: ${url}`);
             const res = await axios_1.default.get(url, {
                 timeout: this.timeout,
@@ -421,6 +434,13 @@ class WebCrawlerService {
         return this.browser;
     }
     async getPlaywrightPage() {
+        if (this.playwrightRateLimiter.activeTabs >=
+            this.playwrightRateLimiter.maxConcurrentTabs) {
+            console.log(`⏱️ Playwright rate limiting: waiting for available tab slot`);
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+            return this.getPlaywrightPage();
+        }
+        this.playwrightRateLimiter.activeTabs++;
         if (!this.page) {
             const browser = await this.getPlaywrightBrowser();
             this.page = await browser.newPage();
@@ -459,6 +479,7 @@ class WebCrawlerService {
         }
     }
     async scrapeWithCheerio(url) {
+        await this.enforceRateLimit();
         const res = await axios_1.default.get(url, {
             timeout: this.timeout,
             headers: {
@@ -490,6 +511,7 @@ class WebCrawlerService {
         return { title, description, keywords, bodySnippet };
     }
     async scrapeWithPlaywright(url) {
+        await this.enforcePlaywrightRateLimit();
         const page = await this.getPlaywrightPage();
         try {
             await page.goto(url, {
@@ -540,6 +562,9 @@ class WebCrawlerService {
                 bodySnippet: "",
             };
         }
+        finally {
+            this.playwrightRateLimiter.activeTabs = Math.max(0, this.playwrightRateLimiter.activeTabs - 1);
+        }
     }
     isContentSufficient(result) {
         const hasTitle = result.title.length > 0;
@@ -552,6 +577,29 @@ class WebCrawlerService {
         console.log(`   Body content: ${hasBodyContent ? "✅" : "❌"} (${result.bodySnippet.length} chars)`);
         console.log(`   Needs fallback: ${needsFallback ? "Yes" : "No"}`);
         return !needsFallback;
+    }
+    async enforceRateLimit() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.rateLimiter.lastRequestTime;
+        if (timeSinceLastRequest < this.rateLimiter.minInterval) {
+            const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
+            console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        this.rateLimiter.lastRequestTime = Date.now();
+    }
+    async enforcePlaywrightRateLimit() {
+        const now = Date.now();
+        const timeSinceLastRequest = now - this.playwrightRateLimiter.lastRequestTime;
+        if (timeSinceLastRequest < this.playwrightRateLimiter.minInterval) {
+            const delay = this.playwrightRateLimiter.minInterval - timeSinceLastRequest;
+            console.log(`⏱️ Playwright rate limiting: waiting ${delay}ms`);
+            await new Promise((resolve) => setTimeout(resolve, delay));
+        }
+        const randomDelay = Math.floor(Math.random() * 4000) + 2000;
+        console.log(`⏱️ Playwright random delay: ${randomDelay}ms`);
+        await new Promise((resolve) => setTimeout(resolve, randomDelay));
+        this.playwrightRateLimiter.lastRequestTime = Date.now();
     }
     async cleanup() {
         if (this.page) {
