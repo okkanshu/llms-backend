@@ -1,6 +1,7 @@
 import { LLMsFullPayload, LLMsFullGenerationResponse } from "../types";
 import { xaiService } from "./ai.service";
 import { webCrawlerService } from "./web-crawler.service";
+import { chromium, Browser, Page } from "playwright";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -19,6 +20,24 @@ interface FullPageData {
 }
 
 export class LLMsFullService {
+  private rateLimiter = {
+    lastRequestTime: 0,
+    requestsPerSecond: 25,
+    minInterval: 1000 / 25, // 40ms between requests
+  };
+
+  private playwrightRateLimiter = {
+    lastRequestTime: 0,
+    requestsPerMinute: 25, // 20-30 per minute
+    minInterval: 60000 / 25, // 2.4 seconds minimum
+    maxConcurrentTabs: 2, // 1-3 concurrent tabs
+    activeTabs: 0,
+  };
+
+  private browser: Browser | null = null;
+  private page: Page | null = null;
+  private userAgent = "TheLLMsTxt-Crawler/1.0";
+
   /**
    * Generate comprehensive llms-full.txt content
    */
@@ -109,6 +128,9 @@ export class LLMsFullService {
         );
 
         try {
+          // Rate limiting for cheerio requests
+          await this.enforceRateLimit();
+
           // Use the web crawler's crawlPage method directly
           const baseDomain = new URL(baseUrl).hostname;
           const res = await webCrawlerService.crawlPage(cur, baseDomain);
@@ -384,6 +406,282 @@ export class LLMsFullService {
       return `# Site Overview\nError generating overview: ${
         error instanceof Error ? error.message : "Unknown error"
       }`;
+    }
+  }
+
+  /**
+   * Rate limiting enforcement
+   */
+  private async enforceRateLimit(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.rateLimiter.lastRequestTime;
+
+    if (timeSinceLastRequest < this.rateLimiter.minInterval) {
+      const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
+      console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    this.rateLimiter.lastRequestTime = Date.now();
+  }
+
+  /**
+   * Playwright rate limiting enforcement
+   */
+  private async enforcePlaywrightRateLimit(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest =
+      now - this.playwrightRateLimiter.lastRequestTime;
+
+    if (timeSinceLastRequest < this.playwrightRateLimiter.minInterval) {
+      const delay =
+        this.playwrightRateLimiter.minInterval - timeSinceLastRequest;
+      console.log(`⏱️ Playwright rate limiting: waiting ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    // Add random delay between 2-6 seconds
+    const randomDelay = Math.floor(Math.random() * 4000) + 2000; // 2-6 seconds
+    console.log(`⏱️ Playwright random delay: ${randomDelay}ms`);
+    await new Promise((resolve) => setTimeout(resolve, randomDelay));
+
+    this.playwrightRateLimiter.lastRequestTime = Date.now();
+  }
+
+  /**
+   * Initialize Playwright browser singleton
+   */
+  private async getPlaywrightBrowser(): Promise<Browser> {
+    if (!this.browser) {
+      console.log(`🚀 Initializing Playwright browser...`);
+      this.browser = await chromium.launch({
+        headless: true,
+        args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      });
+    }
+    return this.browser;
+  }
+
+  /**
+   * Get or create Playwright page
+   */
+  private async getPlaywrightPage(): Promise<Page> {
+    // Check concurrent tabs limit
+    if (
+      this.playwrightRateLimiter.activeTabs >=
+      this.playwrightRateLimiter.maxConcurrentTabs
+    ) {
+      console.log(
+        `⏱️ Playwright rate limiting: waiting for available tab slot`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return this.getPlaywrightPage(); // Retry
+    }
+
+    this.playwrightRateLimiter.activeTabs++;
+
+    if (!this.page) {
+      const browser = await this.getPlaywrightBrowser();
+      this.page = await browser.newPage();
+      await this.page.setExtraHTTPHeaders({ "User-Agent": this.userAgent });
+      await this.page.setViewportSize({ width: 1280, height: 720 });
+    }
+    return this.page;
+  }
+
+  /**
+   * Scrape page with Playwright for dynamic content
+   */
+  private async scrapeWithPlaywright(url: string): Promise<{
+    title: string;
+    description: string;
+    keywords: string;
+    bodySnippet: string;
+  }> {
+    // Rate limiting for playwright requests
+    await this.enforcePlaywrightRateLimit();
+
+    const page = await this.getPlaywrightPage();
+
+    try {
+      await page.goto(url, {
+        waitUntil: "networkidle",
+        timeout: 10000,
+      });
+
+      // Wait for content to load
+      await page.waitForTimeout(2000);
+
+      // Extract metadata using the same logic as Cheerio
+      const title = await page.evaluate(() => {
+        const titleEl = document.querySelector("title");
+        const h1El = document.querySelector("h1");
+        const ogTitleEl = document.querySelector('meta[property="og:title"]');
+
+        return (
+          titleEl?.textContent?.trim() ||
+          h1El?.textContent?.trim() ||
+          ogTitleEl?.getAttribute("content") ||
+          ""
+        );
+      });
+
+      const description = await page.evaluate(() => {
+        const descEl = document.querySelector('meta[name="description"]');
+        const ogDescEl = document.querySelector(
+          'meta[property="og:description"]'
+        );
+        const firstP = document.querySelector("p");
+
+        return (
+          descEl?.getAttribute("content") ||
+          ogDescEl?.getAttribute("content") ||
+          firstP?.textContent?.trim().substring(0, 160) ||
+          ""
+        );
+      });
+
+      const keywords = await page.evaluate(() => {
+        const keywordsEl = document.querySelector('meta[name="keywords"]');
+        return keywordsEl?.getAttribute("content") || "";
+      });
+
+      // Extract body content
+      const bodySnippet = await page.evaluate(() => {
+        // Remove script, style, noscript, iframe, svg elements
+        const elementsToRemove = document.querySelectorAll(
+          "script, style, noscript, iframe, svg"
+        );
+        elementsToRemove.forEach((el) => el.remove());
+
+        const bodyText = document.body?.textContent || "";
+        const cleanedText = bodyText
+          .replace(/[ \t]+/g, " ")
+          .replace(/\n{3,}/g, "\n\n")
+          .trim();
+
+        return cleanedText.slice(0, 30000);
+      });
+
+      return { title, description, keywords, bodySnippet };
+    } catch (error) {
+      console.log(`❌ Playwright scraping failed: ${error}`);
+      return {
+        title: "",
+        description: "",
+        keywords: "",
+        bodySnippet: "",
+      };
+    } finally {
+      // Release tab slot
+      this.playwrightRateLimiter.activeTabs = Math.max(
+        0,
+        this.playwrightRateLimiter.activeTabs - 1
+      );
+    }
+  }
+
+  /**
+   * Enhanced scraping with Playwright fallback
+   */
+  async scrapePage(url: string): Promise<{
+    title: string;
+    description: string;
+    keywords: string;
+    bodySnippet: string;
+  }> {
+    console.log(`🌐 Starting enhanced scraping for: ${url}`);
+
+    try {
+      // First attempt: Use web crawler service (fast path)
+      console.log(`⚡ Attempting web crawler service...`);
+      const baseDomain = new URL(url).hostname;
+      const cheerioResult = await webCrawlerService.crawlPage(url, baseDomain);
+
+      if (cheerioResult.success) {
+        const result = {
+          title: cheerioResult.metadata.title || "",
+          description: cheerioResult.metadata.description || "",
+          keywords: cheerioResult.metadata.keywords || "",
+          bodySnippet: cheerioResult.metadata.bodyContent || "",
+        };
+
+        // Check if content is sufficient
+        const isContentSufficient = this.isContentSufficient(result);
+
+        if (isContentSufficient) {
+          console.log(`✅ Web crawler service successful - content sufficient`);
+          return result;
+        }
+      }
+
+      // Fallback to Playwright
+      console.log(
+        `⚠️ [warning] Falling back to Playwright: heavy page detected`
+      );
+      console.log(`🎭 Attempting Playwright scraping...`);
+
+      const playwrightResult = await this.scrapeWithPlaywright(url);
+      console.log(`✅ Playwright scraping completed`);
+
+      return playwrightResult;
+    } catch (error) {
+      console.log(`❌ Enhanced scraping failed: ${error}`);
+      return {
+        title: "",
+        description: "",
+        keywords: "",
+        bodySnippet: "",
+      };
+    }
+  }
+
+  /**
+   * Check if content is sufficient (detection logic)
+   */
+  private isContentSufficient(result: {
+    title: string;
+    description: string;
+    keywords: string;
+    bodySnippet: string;
+  }): boolean {
+    const hasTitle = result.title.length > 0;
+    const hasDescription = result.description.length > 0;
+    const hasBodyContent = result.bodySnippet.length >= 1000;
+
+    // Fallback to Playwright if all are empty or body content is too short
+    const needsFallback = !hasTitle && !hasDescription && !hasBodyContent;
+
+    console.log(`🔍 Content sufficiency check:`);
+    console.log(
+      `   Title: ${hasTitle ? "✅" : "❌"} (${result.title.length} chars)`
+    );
+    console.log(
+      `   Description: ${hasDescription ? "✅" : "❌"} (${
+        result.description.length
+      } chars)`
+    );
+    console.log(
+      `   Body content: ${hasBodyContent ? "✅" : "❌"} (${
+        result.bodySnippet.length
+      } chars)`
+    );
+    console.log(`   Needs fallback: ${needsFallback ? "Yes" : "No"}`);
+
+    return !needsFallback;
+  }
+
+  /**
+   * Cleanup Playwright resources
+   */
+  async cleanup(): Promise<void> {
+    if (this.page) {
+      await this.page.close();
+      this.page = null;
+    }
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
     }
   }
 

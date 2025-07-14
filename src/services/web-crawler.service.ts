@@ -43,6 +43,19 @@ export class WebCrawlerService {
   private userAgent = "TheLLMsTxt-Crawler/1.0";
   private browser: Browser | null = null;
   private page: Page | null = null;
+  private rateLimiter = {
+    lastRequestTime: 0,
+    requestsPerSecond: 25,
+    minInterval: 1000 / 25, // 40ms between requests
+  };
+
+  private playwrightRateLimiter = {
+    lastRequestTime: 0,
+    requestsPerMinute: 25, // 20-30 per minute
+    minInterval: 60000 / 25, // 2.4 seconds minimum
+    maxConcurrentTabs: 2, // 1-3 concurrent tabs
+    activeTabs: 0,
+  };
 
   async extractWebsiteData(
     url: string,
@@ -169,6 +182,9 @@ export class WebCrawlerService {
     signal?: AbortSignal
   ): Promise<CrawlResult> {
     try {
+      // Rate limiting for cheerio requests
+      await this.enforceRateLimit();
+
       console.log(`🌐 Fetching: ${url}`);
       const res = await axios.get(url, {
         timeout: this.timeout,
@@ -522,6 +538,20 @@ export class WebCrawlerService {
 
   // Get or create Playwright page
   private async getPlaywrightPage(): Promise<Page> {
+    // Check concurrent tabs limit
+    if (
+      this.playwrightRateLimiter.activeTabs >=
+      this.playwrightRateLimiter.maxConcurrentTabs
+    ) {
+      console.log(
+        `⏱️ Playwright rate limiting: waiting for available tab slot`
+      );
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      return this.getPlaywrightPage(); // Retry
+    }
+
+    this.playwrightRateLimiter.activeTabs++;
+
     if (!this.page) {
       const browser = await this.getPlaywrightBrowser();
       this.page = await browser.newPage();
@@ -586,6 +616,9 @@ export class WebCrawlerService {
     keywords: string;
     bodySnippet: string;
   }> {
+    // Rate limiting for cheerio requests
+    await this.enforceRateLimit();
+
     const res = await axios.get(url, {
       timeout: this.timeout,
       headers: {
@@ -634,6 +667,9 @@ export class WebCrawlerService {
     keywords: string;
     bodySnippet: string;
   }> {
+    // Rate limiting for playwright requests
+    await this.enforcePlaywrightRateLimit();
+
     const page = await this.getPlaywrightPage();
 
     try {
@@ -705,6 +741,12 @@ export class WebCrawlerService {
         keywords: "",
         bodySnippet: "",
       };
+    } finally {
+      // Release tab slot
+      this.playwrightRateLimiter.activeTabs = Math.max(
+        0,
+        this.playwrightRateLimiter.activeTabs - 1
+      );
     }
   }
 
@@ -739,6 +781,41 @@ export class WebCrawlerService {
     console.log(`   Needs fallback: ${needsFallback ? "Yes" : "No"}`);
 
     return !needsFallback;
+  }
+
+  // Rate limiting enforcement
+  private async enforceRateLimit(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.rateLimiter.lastRequestTime;
+
+    if (timeSinceLastRequest < this.rateLimiter.minInterval) {
+      const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
+      console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    this.rateLimiter.lastRequestTime = Date.now();
+  }
+
+  // Playwright rate limiting enforcement
+  private async enforcePlaywrightRateLimit(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest =
+      now - this.playwrightRateLimiter.lastRequestTime;
+
+    if (timeSinceLastRequest < this.playwrightRateLimiter.minInterval) {
+      const delay =
+        this.playwrightRateLimiter.minInterval - timeSinceLastRequest;
+      console.log(`⏱️ Playwright rate limiting: waiting ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    // Add random delay between 2-6 seconds
+    const randomDelay = Math.floor(Math.random() * 4000) + 2000; // 2-6 seconds
+    console.log(`⏱️ Playwright random delay: ${randomDelay}ms`);
+    await new Promise((resolve) => setTimeout(resolve, randomDelay));
+
+    this.playwrightRateLimiter.lastRequestTime = Date.now();
   }
 
   // Cleanup Playwright resources

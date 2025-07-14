@@ -17,6 +17,12 @@ interface MarkdownPage {
 }
 
 export class MarkdownGeneratorService {
+  private rateLimiter = {
+    lastRequestTime: 0,
+    requestsPerSecond: 25,
+    minInterval: 1000 / 25, // 40ms between requests
+  };
+
   /**
    * Generate markdown versions of key pages
    */
@@ -107,6 +113,9 @@ export class MarkdownGeneratorService {
         }
 
         try {
+          // Rate limiting for cheerio requests
+          await this.enforceRateLimit();
+
           const fullUrl = new URL(page.path, websiteUrl).href;
           const content = await this.extractPageContent(fullUrl, signal);
           page.content = content;
@@ -422,6 +431,22 @@ export class MarkdownGeneratorService {
         error instanceof Error ? error.message : "Unknown error"
       }`;
     }
+  }
+
+  /**
+   * Rate limiting enforcement
+   */
+  private async enforceRateLimit(): Promise<void> {
+    const now = Date.now();
+    const timeSinceLastRequest = now - this.rateLimiter.lastRequestTime;
+
+    if (timeSinceLastRequest < this.rateLimiter.minInterval) {
+      const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
+      console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    this.rateLimiter.lastRequestTime = Date.now();
   }
 
   /**
