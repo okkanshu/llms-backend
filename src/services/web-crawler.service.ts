@@ -194,7 +194,8 @@ export class WebCrawlerService {
       // Rate limiting for cheerio requests
       await this.enforceRateLimit();
 
-      // console.log(`🌐 Fetching: ${url}`);
+      console.log(`🌐 Fetching: ${url} (timeout: ${this.timeout}ms)`);
+      const startTime = Date.now();
       const res = await axios.get(url, {
         timeout: this.timeout,
         headers: {
@@ -208,6 +209,8 @@ export class WebCrawlerService {
         maxRedirects: 5,
         signal,
       });
+      const fetchTime = Date.now() - startTime;
+      console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
 
       // console.log(
       //   `📥 Response status: ${res.status}, Content length: ${res.data.length}`

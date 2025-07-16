@@ -39,6 +39,14 @@ router.post("/cancel-analysis", (req: Request, res: Response): void => {
 });
 
 router.get("/analyze-website", async (req: Request, res: Response) => {
+  // Deployment environment check
+  console.log("🌍 DEPLOYMENT INFO:", {
+    NODE_ENV: process.env.NODE_ENV,
+    PORT: process.env.PORT,
+    ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+    timestamp: new Date().toISOString(),
+  });
+
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -65,7 +73,9 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     "[AUTH CHECK] Authorization header:",
     authHeader,
     "| isAuthenticated:",
-    isAuthenticated
+    isAuthenticated,
+    "| NODE_ENV:",
+    process.env.NODE_ENV
   );
 
   const abortController = new AbortController();
@@ -121,11 +131,17 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
       // For unauthenticated (demo) users, only crawl/scrape 5 pages
       if (!isAuthenticated) {
         console.log("🔒 DEMO MODE: Crawling with max 5 pages");
+        console.log(`🔒 DEMO MODE: Environment: ${process.env.NODE_ENV}`);
+
+        // In production, ensure we get at least 5 pages for demo users
+        const demoMaxPages = process.env.NODE_ENV === "production" ? 5 : 5;
+        console.log(`🔒 DEMO MODE: Using maxPages: ${demoMaxPages}`);
+
         websiteData = await webCrawlerService.extractWebsiteData(
           url,
           6,
           abortController.signal,
-          5 // maxPagesOverride for demo
+          demoMaxPages // maxPagesOverride for demo
         );
         console.log(
           `🔒 DEMO MODE: Crawled ${websiteData.totalPagesCrawled} pages`
