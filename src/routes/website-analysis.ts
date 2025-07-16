@@ -427,4 +427,51 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
   }
 });
 
+// Simple test endpoint to check website links
+router.get("/test-links", async (req: Request, res: Response) => {
+  const url = req.query.url as string;
+  if (!url) {
+    return res.status(400).json({ error: "URL parameter required" });
+  }
+
+  try {
+    console.log(`🧪 Testing links for: ${url}`);
+
+    const response = await fetch(url);
+    const html = await response.text();
+
+    // Simple link extraction test
+    const linkMatches = html.match(/href=["']([^"']+)["']/g) || [];
+    const links = linkMatches
+      .map((match) => {
+        const href = match.match(/href=["']([^"']+)["']/)?.[1];
+        return href;
+      })
+      .filter(Boolean);
+
+    const baseDomain = new URL(url).hostname;
+    const internalLinks = links.filter((link) => {
+      if (!link) return false;
+      try {
+        const abs = new URL(link, url).href;
+        return new URL(abs).hostname === baseDomain;
+      } catch {
+        return false;
+      }
+    });
+
+    res.json({
+      url,
+      totalLinks: links.length,
+      internalLinks: internalLinks.length,
+      sampleLinks: links.slice(0, 10),
+      sampleInternalLinks: internalLinks.slice(0, 10),
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+});
+
 export default router;

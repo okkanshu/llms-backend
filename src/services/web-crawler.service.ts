@@ -67,6 +67,11 @@ export class WebCrawlerService {
       const maxPages =
         typeof maxPagesOverride === "number" ? maxPagesOverride : this.maxPages;
 
+      console.log(
+        `🎯 Crawler initialized with maxPages: ${maxPages}, maxDepth: ${maxDepth}`
+      );
+      console.log(`🎯 Starting URL: ${baseUrl}, Domain: ${baseDomain}`);
+
       while (toCrawl.length && pages < maxPages) {
         // Check for cancellation
         if (signal?.aborted) {
@@ -149,11 +154,13 @@ export class WebCrawlerService {
           toCrawl.length === 0
         }, Max pages reached: ${pages >= maxPages}`
       );
+      console.log(`🏁 Discovered URLs: ${Array.from(discovered).join(", ")}`);
 
       const uniquePaths = this.extractUniquePaths(
         Array.from(discovered),
         baseUrl
       );
+      console.log(`🏁 Unique paths extracted: ${uniquePaths.length} paths`);
       // console.log(`🔍 Found ${uniquePaths.length} unique paths:`, uniquePaths);
 
       const pageMetadatas = this.createPageMetadatas(uniquePaths, crawled);
@@ -263,17 +270,34 @@ export class WebCrawlerService {
       "";
     const keywords = $('meta[name="keywords"]').attr("content") || "";
     const links: string[] = [];
+    let totalLinks = 0;
     $("a[href]").each((_, el) => {
+      totalLinks++;
       const href = $(el).attr("href");
       if (href) {
         try {
           const abs = new URL(href, url).href;
-          if (new URL(abs).hostname === baseDomain) links.push(abs);
-        } catch {}
+          if (new URL(abs).hostname === baseDomain) {
+            links.push(abs);
+            console.log(`🔗 Found internal link: ${href} -> ${abs}`);
+          } else {
+            console.log(
+              `🔗 Found external link: ${href} -> ${abs} (domain: ${
+                new URL(abs).hostname
+              })`
+            );
+          }
+        } catch (error) {
+          console.log(`🔗 Invalid link: ${href} (error: ${error})`);
+        }
       }
     });
 
-    // console.log(`🔗 Found ${links.length} internal links on ${url}`);
+    console.log(`🔗 Link extraction summary for ${url}:`);
+    console.log(`   Total links found: ${totalLinks}`);
+    console.log(`   Internal links: ${links.length}`);
+    console.log(`   Unique internal links: ${new Set(links).size}`);
+
     return {
       title,
       description,
