@@ -257,7 +257,6 @@ router.post("/contact/debug", async (req: Request, res: Response) => {
   }
 });
 
-// Test endpoint to verify Brevo configuration
 router.get("/contact/test", async (req: Request, res: Response) => {
   try {
     const config = {
