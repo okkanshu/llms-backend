@@ -51,7 +51,7 @@ class WebCrawlerService {
             minInterval: 1000 / 25,
         };
     }
-    async extractWebsiteData(url, maxDepth = 6, signal, maxPagesOverride) {
+    async extractWebsiteData(url, maxDepth = 6, signal, maxPagesOverride, onProgress) {
         console.log(`🕷️ Starting website extraction for: ${url}`);
         try {
             const baseUrl = this.normalizeUrl(url);
@@ -72,14 +72,13 @@ class WebCrawlerService {
                 discovered.add(cur);
                 scrapedUrls.push(cur);
                 pages++;
-                console.log(`📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`);
-                console.log(`🔗 Queue length: ${toCrawl.length}, Discovered: ${discovered.size}`);
+                if (onProgress)
+                    onProgress(pages);
                 try {
                     const res = await this.crawlPage(cur, baseDomain, signal);
                     crawled.set(cur, res);
                     if (res.success) {
                         if (res.metadata.links) {
-                            console.log(`🔍 Found ${res.metadata.links.length} links on ${cur}`);
                             let addedLinks = 0;
                             for (const link of res.metadata.links) {
                                 try {
@@ -93,7 +92,6 @@ class WebCrawlerService {
                                 }
                                 catch { }
                             }
-                            console.log(`✅ Added ${addedLinks} new links to crawl queue`);
                         }
                     }
                     else {
@@ -117,9 +115,7 @@ class WebCrawlerService {
                 await new Promise((r) => setTimeout(r, 500));
             }
             console.log(`🏁 Crawling finished. Pages crawled: ${pages}, Queue empty: ${toCrawl.length === 0}, Max pages reached: ${pages >= maxPages}`);
-            console.log(`🏁 Discovered URLs: ${Array.from(discovered).join(", ")}`);
             const uniquePaths = this.extractUniquePaths(Array.from(discovered), baseUrl);
-            console.log(`🏁 Unique paths extracted: ${uniquePaths.length} paths`);
             const pageMetadatas = this.createPageMetadatas(uniquePaths, crawled);
             const main = crawled.get(baseUrl);
             const result = {
@@ -141,7 +137,6 @@ class WebCrawlerService {
     async crawlPage(url, baseDomain, signal) {
         try {
             await this.enforceRateLimit();
-            console.log(`🌐 Fetching: ${url} (timeout: ${this.timeout}ms)`);
             const startTime = Date.now();
             const res = await axios_1.default.get(url, {
                 timeout: this.timeout,
@@ -156,7 +151,6 @@ class WebCrawlerService {
                 signal,
             });
             const fetchTime = Date.now() - startTime;
-            console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
             const $ = cheerio.load(res.data);
             const metadata = this.extractMetadata($, url, baseDomain);
             metadata.bodyContent = this.extractBodyText($);
@@ -202,10 +196,6 @@ class WebCrawlerService {
                 }
             }
         });
-        console.log(`🔗 Link extraction summary for ${url}:`);
-        console.log(`   Total links found: ${totalLinks}`);
-        console.log(`   Internal links: ${links.length}`);
-        console.log(`   Unique internal links: ${new Set(links).size}`);
         return {
             title,
             description,

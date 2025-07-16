@@ -7,9 +7,9 @@ const express_1 = require("express");
 const web_crawler_service_1 = require("../services/web-crawler.service");
 const ai_service_1 = require("../services/ai.service");
 const types_1 = require("../types");
-const llms_full_service_1 = require("../services/llms-full.service");
 const nodemailer_1 = __importDefault(require("nodemailer"));
 const models_1 = require("../models");
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const router = (0, express_1.Router)();
 const activeSessions = new Map();
 router.post("/analyze-website", (_req, res) => {
@@ -36,12 +36,6 @@ router.post("/cancel-analysis", (req, res) => {
     }
 });
 router.get("/analyze-website", async (req, res) => {
-    console.log("🌍 DEPLOYMENT INFO:", {
-        NODE_ENV: process.env.NODE_ENV,
-        PORT: process.env.PORT,
-        ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
-        timestamp: new Date().toISOString(),
-    });
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -59,7 +53,6 @@ router.get("/analyze-website", async (req, res) => {
         isAuthenticated = true;
         userEmail = authHeader.replace("Bearer ", "").trim();
     }
-    console.log("[AUTH CHECK] Authorization header:", authHeader, "| isAuthenticated:", isAuthenticated, "| NODE_ENV:", process.env.NODE_ENV);
     const abortController = new AbortController();
     if (sessionId)
         activeSessions.set(sessionId, abortController);
@@ -96,6 +89,8 @@ router.get("/analyze-website", async (req, res) => {
             return;
         let websiteData;
         let crawlProgress = 5;
+        let asyncPromptSent = false;
+        let userEmailForAsync = null;
         const crawlHeartbeat = setInterval(() => {
             if (crawlProgress < 99) {
                 sendEvent("progress", {
@@ -108,16 +103,21 @@ router.get("/analyze-website", async (req, res) => {
         try {
             if (!isAuthenticated) {
                 console.log("🔒 DEMO MODE: Crawling with max 5 pages");
-                console.log(`🔒 DEMO MODE: Environment: ${process.env.NODE_ENV}`);
                 const demoMaxPages = process.env.NODE_ENV === "production" ? 5 : 5;
                 console.log(`🔒 DEMO MODE: Using maxPages: ${demoMaxPages}`);
                 websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal, demoMaxPages);
-                console.log(`🔒 DEMO MODE: Crawled ${websiteData.totalPagesCrawled} pages`);
             }
             else {
-                console.log("🔓 AUTHENTICATED MODE: Crawling with full access");
-                websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal);
-                console.log(`🔓 AUTHENTICATED MODE: Crawled ${websiteData.totalPagesCrawled} pages`);
+                const authHeader = req.headers["authorization"];
+                userEmailForAsync = getEmailFromAuthHeader(authHeader);
+                websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal, 1000, (pagesCrawled) => {
+                    if (!asyncPromptSent && pagesCrawled === 20) {
+                        sendEvent("asyncPrompt", {
+                            message: "Generating llms.txt for your website may take more time. You can leave this website while it is under process. We will send you the file in your email when it is completed.",
+                        });
+                        asyncPromptSent = true;
+                    }
+                });
             }
         }
         finally {
@@ -128,75 +128,6 @@ router.get("/analyze-website", async (req, res) => {
         sendEvent("progress", { progress: 99, message: "Website data extracted" });
         const pathSelections = web_crawler_service_1.webCrawlerService.convertToPathSelections(websiteData.paths);
         sendEvent("progress", { progress: 60, message: "Paths converted" });
-        let demoLimit = 5;
-        const estimatedCrawlTime = (0, llms_full_service_1.estimateCrawlTime)(pathSelections.length);
-        const longJobThreshold = 10 * 60;
-        if (isAuthenticated && estimatedCrawlTime > longJobThreshold) {
-            const authHeader = req.headers["authorization"];
-            let userEmail = null;
-            if (authHeader &&
-                typeof authHeader === "string" &&
-                authHeader.startsWith("Bearer ")) {
-                userEmail = authHeader.replace("Bearer ", "").trim();
-            }
-            if (!userEmail) {
-                sendEvent("result", {
-                    success: false,
-                    error: "Unable to determine user email for async delivery.",
-                });
-                res.end();
-                return;
-            }
-            sendEvent("result", {
-                success: true,
-                asyncJob: true,
-                message: `This job will take more than 10 minutes. You can leave the site; we will email your llms.txt to ${userEmail} once it's ready.`,
-            });
-            sendEvent("progress", { progress: 100, message: "Async job started" });
-            res.end();
-            (async () => {
-                try {
-                    const websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6);
-                    const pathSelections = web_crawler_service_1.webCrawlerService.convertToPathSelections(websiteData.paths);
-                    let content = `llms.txt for ${url}\nPages: ${websiteData.totalPagesCrawled}\n...`;
-                    const transporter = nodemailer_1.default.createTransport({
-                        host: process.env.SMTP_HOST || "smtp.gmail.com",
-                        port: Number(process.env.SMTP_PORT) || 465,
-                        secure: true,
-                        auth: {
-                            user: process.env.SMTP_USER || "dummy@gmail.com",
-                            pass: process.env.SMTP_PASS || "yourpassword",
-                        },
-                    });
-                    await transporter.sendMail({
-                        from: process.env.SMTP_USER || "dummy@gmail.com",
-                        to: userEmail,
-                        subject: `Your llms.txt is ready!`,
-                        text: `Your llms.txt file for ${url} is attached.`,
-                        attachments: [
-                            {
-                                filename: "llms.txt",
-                                content,
-                                contentType: "text/plain",
-                            },
-                        ],
-                    });
-                    console.log(`✅ llms.txt sent to ${userEmail}`);
-                    await models_1.CrawlResultModel.create({
-                        url,
-                        user: userEmail,
-                        sessionId,
-                        crawledData: websiteData,
-                        email: userEmail,
-                        jobStatus: "completed",
-                    });
-                }
-                catch (err) {
-                    console.error("❌ Failed to send async llms.txt email:", err);
-                }
-            })();
-            return;
-        }
         (async () => {
             try {
                 await models_1.CrawlResultModel.create({
@@ -224,6 +155,98 @@ router.get("/analyze-website", async (req, res) => {
                 console.error("❌ Failed to save crawl result to MongoDB:", err);
             }
         })();
+        if (asyncPromptSent &&
+            isAuthenticated &&
+            typeof userEmailForAsync === "string" &&
+            userEmailForAsync.trim().length > 0 &&
+            /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(userEmailForAsync)) {
+            try {
+                const rules = pathSelections.map((p) => ({
+                    id: p.path,
+                    userAgent: "*",
+                    type: "Allow",
+                    path: p.path,
+                }));
+                const selectedBots = bots && bots.length > 0
+                    ? bots
+                    : websiteData.selectedBots || [];
+                const llmsTxtContent = generateLlmsTxtContent({
+                    websiteData,
+                    pathSelections,
+                    rules,
+                    selectedBots,
+                    aiGeneratedContent: websiteData.aiGeneratedContent || [],
+                    enhancedFeatures: { aiEnrichment },
+                });
+                console.log("[EMAIL DEBUG] llms.txt content to be sent as attachment:\n", llmsTxtContent);
+                const llmsFullLink = `https://thellmstxt.com/?llmsfull=1&url=${encodeURIComponent(url)}`;
+                const markdownLink = `https://thellmstxt.com/?markdown=1&url=${encodeURIComponent(url)}`;
+                const transporter = nodemailer_1.default.createTransport({
+                    host: "smtp-relay.brevo.com",
+                    port: 587,
+                    secure: false,
+                    auth: {
+                        user: process.env.BREVO_SMTP_USER,
+                        pass: process.env.BREVO_SMTP_KEY,
+                    },
+                });
+                const mailResult = await transporter.sendMail({
+                    from: process.env.SMTP_USER,
+                    to: userEmailForAsync,
+                    subject: `Your llms.txt for ${url} is ready!`,
+                    text: `Your llms.txt file for ${url} is attached.\n\nQuick links:\n- LLMs Full: ${llmsFullLink}\n- Markdown: ${markdownLink}\n\nThank you for using TheLLMsTxt!`,
+                    html: `
+  <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 520px; margin: 0 auto; background: #f7fafd; border-radius: 8px; box-shadow: 0 2px 8px #0001; padding: 32px 24px; border: 1px solid #e5e7eb;">
+    <div style="text-align: center;">
+      <h2 style="color: #1e293b; font-size: 1.7rem; margin-bottom: 8px; font-weight: 700;">Your llms.txt is ready!</h2>
+      <p style="color: #334155; font-size: 1.05rem; margin-bottom: 18px;">
+        Your <b>llms.txt</b> file for <a href="${url}" style="color: #2563eb; text-decoration: underline;">${url}</a> is attached.
+      </p>
+      <a href="${llmsFullLink}" style="display: inline-block; margin: 8px 0 0 0; padding: 10px 24px; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 1rem;">View LLMs Full Version</a>
+      <br/>
+      <a href="${markdownLink}" style="display: inline-block; margin: 12px 0 0 0; padding: 10px 24px; background: #059669; color: #fff; border-radius: 6px; text-decoration: none; font-weight: 600; font-size: 1rem;">View Markdown Version</a>
+    </div>
+    <hr style="margin: 32px 0 18px 0; border: none; border-top: 1px solid #e0e0e0;">
+    <div style="color: #64748b; font-size: 0.97rem; text-align: center;">
+      Thank you for using <a href="https://thellmstxt.com" style="color: #2563eb; text-decoration: underline;">TheLLMsTxt</a>!<br>
+      If you have questions, just reply to this email.
+    </div>
+  </div>
+`,
+                    attachments: [
+                        {
+                            filename: "llms.txt",
+                            content: llmsTxtContent,
+                            contentType: "text/plain",
+                        },
+                    ],
+                });
+                console.log(`[EMAIL] sendMail result:`, mailResult);
+                if (mailResult.accepted && mailResult.accepted.length > 0) {
+                    console.log(`[EMAIL] accepted for delivery to:`, mailResult.accepted);
+                }
+                else {
+                    console.warn(`[EMAIL] NOT accepted for delivery. Response:`, mailResult);
+                }
+            }
+            catch (err) {
+                console.error("❌ Failed to send llms.txt email:", err);
+            }
+        }
+        else if (asyncPromptSent && isAuthenticated) {
+            if (typeof userEmailForAsync === "string" &&
+                userEmailForAsync.trim().length > 0) {
+                if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(userEmailForAsync)) {
+                    console.warn(`[EMAIL] Not sending async llms.txt email: email present but invalid format: ${userEmailForAsync}`);
+                }
+                else {
+                    console.warn(`[EMAIL] Not sending async llms.txt email: unknown reason. Value: ${userEmailForAsync}`);
+                }
+            }
+            else {
+                console.warn(`[EMAIL] Not sending async llms.txt email: userEmailForAsync is missing or invalid. Value: ${userEmailForAsync}`);
+            }
+        }
         let gatedPathSelections = pathSelections;
         let gatedPageMetadatas = websiteData.pageMetadatas;
         let isDemo = false;
@@ -231,12 +254,12 @@ router.get("/analyze-website", async (req, res) => {
         if (!isAuthenticated) {
             isDemo = true;
             remainingPages =
-                pathSelections.length > demoLimit
-                    ? pathSelections.length - demoLimit
+                pathSelections.length > 5
+                    ? pathSelections.length - 5
                     : 0;
         }
-        else if (pathSelections.length > demoLimit) {
-            remainingPages = pathSelections.length - demoLimit;
+        else if (pathSelections.length > 5) {
+            remainingPages = pathSelections.length - 5;
         }
         let aiGeneratedContent = [];
         let rateLimitHit = false;
@@ -309,11 +332,6 @@ router.get("/analyze-website", async (req, res) => {
                 response.demo = true;
                 response.remainingPages = remainingPages;
                 response.demoMessage = `Sign up or log in to access all features. You are seeing a demo experience.`;
-                console.log("[DEMO GATING] Sending demo response:", response.demoMessage +
-                    "\n" +
-                    response.demo +
-                    "\n" +
-                    response.remainingPages);
             }
             console.log("🔍 Backend sending response:", {
                 aiEnrichment,
@@ -382,5 +400,132 @@ router.get("/test-links", async (req, res) => {
         });
     }
 });
+function getEmailFromAuthHeader(authHeader) {
+    if (!authHeader ||
+        typeof authHeader !== "string" ||
+        !authHeader.startsWith("Bearer "))
+        return null;
+    const token = authHeader.replace("Bearer ", "").trim();
+    try {
+        const decoded = jsonwebtoken_1.default.decode(token);
+        console.log("[EMAIL] Decoded JWT payload:", decoded);
+        if (decoded &&
+            typeof decoded === "object" &&
+            decoded.email &&
+            typeof decoded.email === "string") {
+            return decoded.email;
+        }
+        else {
+            console.warn("[EMAIL] No email field in decoded JWT payload:", decoded);
+        }
+    }
+    catch (err) {
+        console.warn("[EMAIL] Failed to decode JWT for email extraction", err);
+    }
+    return null;
+}
+function generateLlmsTxtContent({ websiteData, pathSelections, rules = [], selectedBots = [], aiGeneratedContent = [], enhancedFeatures = {}, }) {
+    const metaMap = new Map();
+    if (websiteData.pageMetadatas && Array.isArray(websiteData.pageMetadatas)) {
+        websiteData.pageMetadatas.forEach((m) => metaMap.set(m.path, m));
+    }
+    const aiContentMap = new Map();
+    if (aiGeneratedContent && Array.isArray(aiGeneratedContent)) {
+        aiGeneratedContent.forEach((ai) => aiContentMap.set(ai.path, ai));
+    }
+    let content = `# ${websiteData.title || "Website Overview"}\n`;
+    content += `# Website: ${websiteData.url || websiteData.metadata?.url || ""}\n`;
+    content += `# Last updated: ${new Date().toISOString().slice(0, 10)}\n`;
+    content += `# AI Enrichment: ${enhancedFeatures.aiEnrichment ? "Enabled" : "Disabled"}\n`;
+    content += `\n`;
+    if (websiteData.description) {
+        content += `> ${websiteData.description}\n\n`;
+    }
+    content += `## Company Information\n`;
+    content += `- **Name**: ${websiteData.title || "N/A"}\n`;
+    content += `- **Website**: ${websiteData.url || websiteData.metadata?.url || ""}\n`;
+    if (websiteData.totalPagesCrawled)
+        content += `- **Pages Crawled**: ${websiteData.totalPagesCrawled}\n`;
+    if (websiteData.totalLinksFound)
+        content += `- **Total Links Found**: ${websiteData.totalLinksFound}\n`;
+    if (websiteData.uniquePathsFound)
+        content += `- **Unique Paths Found**: ${websiteData.uniquePathsFound}\n`;
+    content += `- **Generated**: ${new Date().toISOString()}\n`;
+    content += `\n`;
+    content += `## Access Permissions for LLMs\n`;
+    content += `LLMs and indexing agents are encouraged to read and use this file for accurate citation and integration guidance.\n\n`;
+    const LLM_BOT_CONFIGS = {};
+    try {
+        Object.assign(LLM_BOT_CONFIGS, require("../types").LLM_BOT_CONFIGS);
+    }
+    catch { }
+    const allBots = Object.keys(LLM_BOT_CONFIGS);
+    const allowedBots = selectedBots || [];
+    const disallowedBots = allBots.filter((b) => !allowedBots.includes(b));
+    content += `## AI Tool Permissions\n\n`;
+    content += `Allowed:\n`;
+    allowedBots.forEach((bot) => {
+        content += `- ${bot} (${LLM_BOT_CONFIGS[bot]?.description || ""})\n`;
+    });
+    content += `\nDisallowed:\n`;
+    disallowedBots.forEach((bot) => {
+        content += `- ${bot} (${LLM_BOT_CONFIGS[bot]?.description || ""})\n`;
+    });
+    content += `\n`;
+    content += `Navigation Structure\n----------------------\n`;
+    const allowedPaths = rules.filter((r) => r.type === "Allow");
+    if (allowedPaths.length > 0) {
+        content += `# Allowed Paths\n`;
+        allowedPaths.forEach((rule) => {
+            content += `- ${rule.path}\n`;
+            const pathData = pathSelections.find((p) => p.path === rule.path) || {};
+            const meta = metaMap.get(rule.path) || {};
+            const aiContent = aiContentMap.get(rule.path) || {};
+            if (meta.title)
+                content += `    • Title: ${meta.title}\n`;
+            else if (pathData.title)
+                content += `    • Title: ${pathData.title}\n`;
+            if (meta.description)
+                content += `    • Description: ${meta.description}\n`;
+            else if (pathData.description)
+                content += `    • Description: ${pathData.description}\n`;
+            if (meta.keywords)
+                content += `    • Keywords: ${meta.keywords}\n`;
+            else if (pathData.keywords)
+                content += `    • Keywords: ${pathData.keywords}\n`;
+            if (aiContent.summary)
+                content += `    • AI Summary: ${aiContent.summary}\n`;
+            if (aiContent.contextSnippet)
+                content += `    • AI Context: ${aiContent.contextSnippet}\n`;
+            if (aiContent.contentType)
+                content += `    • Content Type: ${aiContent.contentType}\n`;
+            if (aiContent.priority)
+                content += `    • Priority: ${aiContent.priority}\n`;
+            if (aiContent.aiUsageDirective)
+                content += `    • AI Usage: ${aiContent.aiUsageDirective}\n`;
+            if (enhancedFeatures.aiEnrichment &&
+                aiContent.keywords &&
+                aiContent.keywords.length > 0) {
+                content += `    • AI Keywords: ${aiContent.keywords.join(", ")}\n`;
+            }
+        });
+    }
+    const disallowedPaths = rules.filter((r) => r.type === "Disallow");
+    if (disallowedPaths.length > 0) {
+        content += `# Disallowed Paths\n`;
+        disallowedPaths.forEach((rule) => {
+            content += `- ${rule.path}\n`;
+        });
+    }
+    content += `\n`;
+    if (websiteData.paths && websiteData.paths.length > 0) {
+        content += `Sitemap Structure\n-----------------\n`;
+        websiteData.paths.forEach((p) => {
+            content += `- ${typeof p === "string" ? p : p.path}\n`;
+        });
+        content += `\n`;
+    }
+    return content;
+}
 exports.default = router;
 //# sourceMappingURL=website-analysis.js.map

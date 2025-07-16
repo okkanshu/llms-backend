@@ -51,7 +51,8 @@ export class WebCrawlerService {
     url: string,
     maxDepth: number = 6,
     signal?: AbortSignal,
-    maxPagesOverride?: number // NEW: optional maxPages for demo gating
+    maxPagesOverride?: number, // NEW: optional maxPages for demo gating
+    onProgress?: (pagesCrawled: number) => void // Optional progress callback
   ): Promise<WebsiteData> {
     console.log(`🕷️ Starting website extraction for: ${url}`);
     try {
@@ -84,13 +85,14 @@ export class WebCrawlerService {
         discovered.add(cur);
         scrapedUrls.push(cur); // Add to temporary array
         pages++;
+        if (onProgress) onProgress(pages);
 
-        console.log(
-          `📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`
-        );
-        console.log(
-          `🔗 Queue length: ${toCrawl.length}, Discovered: ${discovered.size}`
-        );
+        // console.log(
+        //   `📄 Crawling page ${pages}/${maxPages}`
+        // );
+        // console.log(
+        //   `🔗 Queue length: ${toCrawl.length}, Discovered: ${discovered.size}`
+        // );
 
         try {
           const res = await this.crawlPage(cur, baseDomain, signal);
@@ -108,9 +110,9 @@ export class WebCrawlerService {
             // console.log(`   Links found: ${res.metadata.links.length}`);
 
             if (res.metadata.links) {
-              console.log(
-                `🔍 Found ${res.metadata.links.length} links on ${cur}`
-              );
+              // console.log(
+              //   `🔍 Found ${res.metadata.links.length} links on ${cur}`
+              // );
               let addedLinks = 0;
               for (const link of res.metadata.links) {
                 try {
@@ -125,7 +127,7 @@ export class WebCrawlerService {
                   }
                 } catch {}
               }
-              console.log(`✅ Added ${addedLinks} new links to crawl queue`);
+              // console.log(`✅ Added ${addedLinks} new links to crawl queue`);
             }
           } else {
             // console.log(`❌ Failed to crawl: ${cur} - ${res.error}`);
@@ -154,13 +156,13 @@ export class WebCrawlerService {
           toCrawl.length === 0
         }, Max pages reached: ${pages >= maxPages}`
       );
-      console.log(`🏁 Discovered URLs: ${Array.from(discovered).join(", ")}`);
+      // console.log(`🏁 Discovered URLs: ${Array.from(discovered).join(", ")}`);
 
       const uniquePaths = this.extractUniquePaths(
         Array.from(discovered),
         baseUrl
       );
-      console.log(`🏁 Unique paths extracted: ${uniquePaths.length} paths`);
+      // console.log(`🏁 Unique paths extracted: ${uniquePaths.length} paths`);
       // console.log(`🔍 Found ${uniquePaths.length} unique paths:`, uniquePaths);
 
       const pageMetadatas = this.createPageMetadatas(uniquePaths, crawled);
@@ -201,7 +203,7 @@ export class WebCrawlerService {
       // Rate limiting for cheerio requests
       await this.enforceRateLimit();
 
-      console.log(`🌐 Fetching: ${url} (timeout: ${this.timeout}ms)`);
+      // console.log(`🌐 Fetching: ${url} (timeout: ${this.timeout}ms)`);
       const startTime = Date.now();
       const res = await axios.get(url, {
         timeout: this.timeout,
@@ -217,7 +219,7 @@ export class WebCrawlerService {
         signal,
       });
       const fetchTime = Date.now() - startTime;
-      console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
+      // console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
 
       // console.log(
       //   `📥 Response status: ${res.status}, Content length: ${res.data.length}`
@@ -293,10 +295,10 @@ export class WebCrawlerService {
       }
     });
 
-    console.log(`🔗 Link extraction summary for ${url}:`);
-    console.log(`   Total links found: ${totalLinks}`);
-    console.log(`   Internal links: ${links.length}`);
-    console.log(`   Unique internal links: ${new Set(links).size}`);
+    // console.log(`🔗 Link extraction summary for ${url}:`);
+    // console.log(`   Total links found: ${totalLinks}`);
+    // console.log(`   Internal links: ${links.length}`);
+    // console.log(`   Unique internal links: ${new Set(links).size}`);
 
     return {
       title,
