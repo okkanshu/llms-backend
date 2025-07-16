@@ -203,7 +203,6 @@ export class WebCrawlerService {
       // Rate limiting for cheerio requests
       await this.enforceRateLimit();
 
-      // console.log(`🌐 Fetching: ${url} (timeout: ${this.timeout}ms)`);
       const startTime = Date.now();
       const res = await axios.get(url, {
         timeout: this.timeout,
@@ -217,34 +216,33 @@ export class WebCrawlerService {
         },
         maxRedirects: 5,
         signal,
+        validateStatus: () => true, // Always resolve
       });
       const fetchTime = Date.now() - startTime;
-      // console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
-
-      // console.log(
-      //   `📥 Response status: ${res.status}, Content length: ${res.data.length}`
-      // );
+      console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
+      console.log(
+        `📥 Response status: ${res.status}, User-Agent: ${this.userAgent}`
+      );
+      if (typeof res.data === "string") {
+        console.log(
+          `📄 First 500 chars of HTML for ${url}:\n${res.data.slice(0, 500)}`
+        );
+      }
 
       const $ = cheerio.load(res.data);
       const metadata = this.extractMetadata($, url, baseDomain);
-      // Add bodyContent for /generate-llms-full
       metadata.bodyContent = this.extractBodyText($);
 
-      // console.log(`📝 Extracted metadata for ${url}:`);
-      // console.log(`   Title: "${metadata.title}"`);
-      // console.log(`   Description: "${metadata.description}"`);
-      // console.log(`   Keywords: "${metadata.keywords}"`);
-      // console.log(
-      //   `   Body content preview: "${metadata.bodyContent?.substring(
-      //     0,
-      //     100
-      //   )}..."`
-      // );
+      if (metadata.links && metadata.links.length) {
+        console.log(`🔗 Links extracted from ${url}:`, metadata.links);
+      } else {
+        console.log(`⚠️ No links extracted from ${url}`);
+      }
 
       return { url, path: this.getPathFromUrl(url), metadata, success: true };
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "Unknown error";
-      // console.log(`❌ Failed to crawl ${url}: ${errorMsg}`);
+      console.log(`❌ Failed to crawl ${url}: ${errorMsg}`);
       return {
         url,
         path: this.getPathFromUrl(url),

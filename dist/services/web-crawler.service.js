@@ -149,15 +149,28 @@ class WebCrawlerService {
                 },
                 maxRedirects: 5,
                 signal,
+                validateStatus: () => true,
             });
             const fetchTime = Date.now() - startTime;
+            console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
+            console.log(`📥 Response status: ${res.status}, User-Agent: ${this.userAgent}`);
+            if (typeof res.data === "string") {
+                console.log(`📄 First 500 chars of HTML for ${url}:\n${res.data.slice(0, 500)}`);
+            }
             const $ = cheerio.load(res.data);
             const metadata = this.extractMetadata($, url, baseDomain);
             metadata.bodyContent = this.extractBodyText($);
+            if (metadata.links && metadata.links.length) {
+                console.log(`🔗 Links extracted from ${url}:`, metadata.links);
+            }
+            else {
+                console.log(`⚠️ No links extracted from ${url}`);
+            }
             return { url, path: this.getPathFromUrl(url), metadata, success: true };
         }
         catch (e) {
             const errorMsg = e instanceof Error ? e.message : "Unknown error";
+            console.log(`❌ Failed to crawl ${url}: ${errorMsg}`);
             return {
                 url,
                 path: this.getPathFromUrl(url),
