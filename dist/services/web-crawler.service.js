@@ -152,6 +152,13 @@ class WebCrawlerService {
                 validateStatus: () => true,
             });
             const fetchTime = Date.now() - startTime;
+            console.log("URL:", url);
+            console.log("Status Code:", res.status);
+            if (typeof res.data === "string") {
+                console.log("HTML length:", res.data.length);
+                const $ = cheerio.load(res.data);
+                console.log("Links found:", $("a").length);
+            }
             console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
             console.log(`📥 Response status: ${res.status}, User-Agent: ${this.userAgent}`);
             if (typeof res.data === "string") {

@@ -80,13 +80,16 @@ const addContactToBrevo = async (contactData: ContactFormData) => {
       attributes: contactPayload.attributes,
     });
 
+    const requestHeaders = {
+      accept: "application/json",
+      "content-type": "application/json",
+      "api-key": apiKey,
+    };
+    console.log("[Brevo] Request headers:", requestHeaders);
+
     const response = await fetch(`https://api.brevo.com/v3/contacts`, {
       method: "POST",
-      headers: {
-        accept: "application/json",
-        "content-type": "application/json",
-        "api-key": apiKey,
-      },
+      headers: requestHeaders,
       body: JSON.stringify(contactPayload),
     });
 

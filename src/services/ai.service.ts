@@ -65,9 +65,9 @@ class XAIRateLimiter {
         const request = this.queue.shift();
         if (request) {
           this.requestCount++;
-            // console.log(
-            //   `[X.AI] Processing request ${this.requestCount}/${this.MAX_REQUESTS_PER_SECOND} per second`
-            // );
+          // console.log(
+          //   `[X.AI] Processing request ${this.requestCount}/${this.MAX_REQUESTS_PER_SECOND} per second`
+          // );
           await request();
         }
       } else {
@@ -223,8 +223,8 @@ Return only the formatted response with the exact labels shown above.`;
       const lines = result.split("\n").filter((line) => line.trim());
       const parsed: any = {};
 
-        // console.log("🔍 AI raw response:", result);
-        // console.log("🔍 AI parsed lines:", lines);
+      // console.log("🔍 AI raw response:", result);
+      // console.log("🔍 AI parsed lines:", lines);
 
       for (const line of lines) {
         if (line.startsWith("SUMMARY:")) {
