@@ -59,6 +59,8 @@ class WebCrawlerService {
             const discovered = new Set(), crawled = new Map(), toCrawl = [[baseUrl, 0]], scrapedUrls = [];
             let pages = 0;
             const maxPages = typeof maxPagesOverride === "number" ? maxPagesOverride : this.maxPages;
+            console.log(`🎯 Crawler initialized with maxPages: ${maxPages}, maxDepth: ${maxDepth}`);
+            console.log(`🎯 Starting URL: ${baseUrl}, Domain: ${baseDomain}`);
             while (toCrawl.length && pages < maxPages) {
                 if (signal?.aborted) {
                     console.log("🛑 Website extraction cancelled by user");
@@ -71,21 +73,27 @@ class WebCrawlerService {
                 scrapedUrls.push(cur);
                 pages++;
                 console.log(`📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`);
+                console.log(`🔗 Queue length: ${toCrawl.length}, Discovered: ${discovered.size}`);
                 try {
                     const res = await this.crawlPage(cur, baseDomain, signal);
                     crawled.set(cur, res);
                     if (res.success) {
                         if (res.metadata.links) {
+                            console.log(`🔍 Found ${res.metadata.links.length} links on ${cur}`);
+                            let addedLinks = 0;
                             for (const link of res.metadata.links) {
                                 try {
                                     const abs = new url_1.URL(link, baseUrl).href;
                                     if (new url_1.URL(abs).hostname === baseDomain &&
                                         !discovered.has(abs) &&
-                                        !scrapedUrls.includes(abs))
+                                        !scrapedUrls.includes(abs)) {
                                         toCrawl.push([abs, depth + 1]);
+                                        addedLinks++;
+                                    }
                                 }
                                 catch { }
                             }
+                            console.log(`✅ Added ${addedLinks} new links to crawl queue`);
                         }
                     }
                     else {
@@ -108,7 +116,10 @@ class WebCrawlerService {
                 }
                 await new Promise((r) => setTimeout(r, 500));
             }
+            console.log(`🏁 Crawling finished. Pages crawled: ${pages}, Queue empty: ${toCrawl.length === 0}, Max pages reached: ${pages >= maxPages}`);
+            console.log(`🏁 Discovered URLs: ${Array.from(discovered).join(", ")}`);
             const uniquePaths = this.extractUniquePaths(Array.from(discovered), baseUrl);
+            console.log(`🏁 Unique paths extracted: ${uniquePaths.length} paths`);
             const pageMetadatas = this.createPageMetadatas(uniquePaths, crawled);
             const main = crawled.get(baseUrl);
             const result = {
@@ -130,6 +141,8 @@ class WebCrawlerService {
     async crawlPage(url, baseDomain, signal) {
         try {
             await this.enforceRateLimit();
+            console.log(`🌐 Fetching: ${url} (timeout: ${this.timeout}ms)`);
+            const startTime = Date.now();
             const res = await axios_1.default.get(url, {
                 timeout: this.timeout,
                 headers: {
@@ -142,6 +155,8 @@ class WebCrawlerService {
                 maxRedirects: 5,
                 signal,
             });
+            const fetchTime = Date.now() - startTime;
+            console.log(`⏱️ Fetch completed in ${fetchTime}ms for ${url}`);
             const $ = cheerio.load(res.data);
             const metadata = this.extractMetadata($, url, baseDomain);
             metadata.bodyContent = this.extractBodyText($);
@@ -169,17 +184,30 @@ class WebCrawlerService {
             "";
         const keywords = $('meta[name="keywords"]').attr("content") || "";
         const links = [];
+        let totalLinks = 0;
         $("a[href]").each((_, el) => {
+            totalLinks++;
             const href = $(el).attr("href");
             if (href) {
                 try {
                     const abs = new url_1.URL(href, url).href;
-                    if (new url_1.URL(abs).hostname === baseDomain)
+                    if (new url_1.URL(abs).hostname === baseDomain) {
                         links.push(abs);
+                        console.log(`🔗 Found internal link: ${href} -> ${abs}`);
+                    }
+                    else {
+                        console.log(`🔗 Found external link: ${href} -> ${abs} (domain: ${new url_1.URL(abs).hostname})`);
+                    }
                 }
-                catch { }
+                catch (error) {
+                    console.log(`🔗 Invalid link: ${href} (error: ${error})`);
+                }
             }
         });
+        console.log(`🔗 Link extraction summary for ${url}:`);
+        console.log(`   Total links found: ${totalLinks}`);
+        console.log(`   Internal links: ${links.length}`);
+        console.log(`   Unique internal links: ${new Set(links).size}`);
         return {
             title,
             description,

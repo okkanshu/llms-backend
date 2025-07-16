@@ -36,6 +36,12 @@ router.post("/cancel-analysis", (req, res) => {
     }
 });
 router.get("/analyze-website", async (req, res) => {
+    console.log("🌍 DEPLOYMENT INFO:", {
+        NODE_ENV: process.env.NODE_ENV,
+        PORT: process.env.PORT,
+        ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+        timestamp: new Date().toISOString(),
+    });
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
@@ -53,7 +59,7 @@ router.get("/analyze-website", async (req, res) => {
         isAuthenticated = true;
         userEmail = authHeader.replace("Bearer ", "").trim();
     }
-    console.log("[AUTH CHECK] Authorization header:", authHeader, "| isAuthenticated:", isAuthenticated);
+    console.log("[AUTH CHECK] Authorization header:", authHeader, "| isAuthenticated:", isAuthenticated, "| NODE_ENV:", process.env.NODE_ENV);
     const abortController = new AbortController();
     if (sessionId)
         activeSessions.set(sessionId, abortController);
@@ -101,10 +107,17 @@ router.get("/analyze-website", async (req, res) => {
         }, 3000);
         try {
             if (!isAuthenticated) {
-                websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal, 5);
+                console.log("🔒 DEMO MODE: Crawling with max 5 pages");
+                console.log(`🔒 DEMO MODE: Environment: ${process.env.NODE_ENV}`);
+                const demoMaxPages = process.env.NODE_ENV === "production" ? 5 : 5;
+                console.log(`🔒 DEMO MODE: Using maxPages: ${demoMaxPages}`);
+                websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal, demoMaxPages);
+                console.log(`🔒 DEMO MODE: Crawled ${websiteData.totalPagesCrawled} pages`);
             }
             else {
+                console.log("🔓 AUTHENTICATED MODE: Crawling with full access");
                 websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal);
+                console.log(`🔓 AUTHENTICATED MODE: Crawled ${websiteData.totalPagesCrawled} pages`);
             }
         }
         finally {
@@ -296,7 +309,11 @@ router.get("/analyze-website", async (req, res) => {
                 response.demo = true;
                 response.remainingPages = remainingPages;
                 response.demoMessage = `Sign up or log in to access all features. You are seeing a demo experience.`;
-                console.log("[DEMO GATING] Sending demo response:", response.demoMessage + "\n" + response.demo + "\n" + response.remainingPages);
+                console.log("[DEMO GATING] Sending demo response:", response.demoMessage +
+                    "\n" +
+                    response.demo +
+                    "\n" +
+                    response.remainingPages);
             }
             console.log("🔍 Backend sending response:", {
                 aiEnrichment,
@@ -321,6 +338,48 @@ router.get("/analyze-website", async (req, res) => {
             activeSessions.delete(sessionId);
             (0, ai_service_1.cleanupSessionRateLimiter)(sessionId);
         }
+    }
+});
+router.get("/test-links", async (req, res) => {
+    const url = req.query.url;
+    if (!url) {
+        return res.status(400).json({ error: "URL parameter required" });
+    }
+    try {
+        console.log(`🧪 Testing links for: ${url}`);
+        const response = await fetch(url);
+        const html = await response.text();
+        const linkMatches = html.match(/href=["']([^"']+)["']/g) || [];
+        const links = linkMatches
+            .map((match) => {
+            const href = match.match(/href=["']([^"']+)["']/)?.[1];
+            return href;
+        })
+            .filter(Boolean);
+        const baseDomain = new URL(url).hostname;
+        const internalLinks = links.filter((link) => {
+            if (!link)
+                return false;
+            try {
+                const abs = new URL(link, url).href;
+                return new URL(abs).hostname === baseDomain;
+            }
+            catch {
+                return false;
+            }
+        });
+        res.json({
+            url,
+            totalLinks: links.length,
+            internalLinks: internalLinks.length,
+            sampleLinks: links.slice(0, 10),
+            sampleInternalLinks: internalLinks.slice(0, 10),
+        });
+    }
+    catch (error) {
+        res.status(500).json({
+            error: error instanceof Error ? error.message : "Unknown error",
+        });
     }
 });
 exports.default = router;

@@ -129,6 +129,48 @@ app.get("/api/llm-bots", (req, res) => {
         bots: Object.values(types_1.LLM_BOT_CONFIGS),
     });
 });
+app.get("/api/test-links", async (req, res) => {
+    const url = req.query.url;
+    if (!url) {
+        return res.status(400).json({ error: "URL parameter required" });
+    }
+    try {
+        console.log(`🧪 Testing links for: ${url}`);
+        const response = await fetch(url);
+        const html = await response.text();
+        const linkMatches = html.match(/href=["']([^"']+)["']/g) || [];
+        const links = linkMatches
+            .map((match) => {
+            const href = match.match(/href=["']([^"']+)["']/)?.[1];
+            return href;
+        })
+            .filter(Boolean);
+        const baseDomain = new URL(url).hostname;
+        const internalLinks = links.filter((link) => {
+            if (!link)
+                return false;
+            try {
+                const abs = new URL(link, url).href;
+                return new URL(abs).hostname === baseDomain;
+            }
+            catch {
+                return false;
+            }
+        });
+        res.json({
+            url,
+            totalLinks: links.length,
+            internalLinks: internalLinks.length,
+            sampleLinks: links.slice(0, 10),
+            sampleInternalLinks: internalLinks.slice(0, 10),
+        });
+    }
+    catch (error) {
+        res.status(500).json({
+            error: error instanceof Error ? error.message : "Unknown error",
+        });
+    }
+});
 app.use("/api-docs", swagger_ui_express_1.default.serve, swagger_ui_express_1.default.setup(specs));
 app.use("/api", website_analysis_1.default);
 app.use("/api", llms_enhanced_1.default);
@@ -174,6 +216,7 @@ app.use((req, res) => {
             "/api/analyze-website",
             "/api/generate-llms-full",
             "/api/generate-markdown",
+            "/api/test-links",
         ],
         documentation: "/api-docs",
     });
