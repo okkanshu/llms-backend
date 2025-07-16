@@ -279,13 +279,13 @@ export class WebCrawlerService {
           const abs = new URL(href, url).href;
           if (new URL(abs).hostname === baseDomain) {
             links.push(abs);
-            console.log(`🔗 Found internal link: ${href} -> ${abs}`);
+            // console.log(`🔗 Found internal link: ${href} -> ${abs}`);
           } else {
-            console.log(
-              `🔗 Found external link: ${href} -> ${abs} (domain: ${
-                new URL(abs).hostname
-              })`
-            );
+            // console.log(
+            //   `🔗 Found external link: ${href} -> ${abs} (domain: ${
+            //     new URL(abs).hostname
+            //   })`
+            // );
           }
         } catch (error) {
           console.log(`🔗 Invalid link: ${href} (error: ${error})`);

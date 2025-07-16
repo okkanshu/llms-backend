@@ -193,10 +193,8 @@ class WebCrawlerService {
                     const abs = new url_1.URL(href, url).href;
                     if (new url_1.URL(abs).hostname === baseDomain) {
                         links.push(abs);
-                        console.log(`🔗 Found internal link: ${href} -> ${abs}`);
                     }
                     else {
-                        console.log(`🔗 Found external link: ${href} -> ${abs} (domain: ${new url_1.URL(abs).hostname})`);
                     }
                 }
                 catch (error) {
