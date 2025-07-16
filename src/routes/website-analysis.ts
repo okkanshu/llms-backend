@@ -120,17 +120,25 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     try {
       // For unauthenticated (demo) users, only crawl/scrape 5 pages
       if (!isAuthenticated) {
+        console.log("🔒 DEMO MODE: Crawling with max 5 pages");
         websiteData = await webCrawlerService.extractWebsiteData(
           url,
           6,
           abortController.signal,
           5 // maxPagesOverride for demo
         );
+        console.log(
+          `🔒 DEMO MODE: Crawled ${websiteData.totalPagesCrawled} pages`
+        );
       } else {
+        console.log("🔓 AUTHENTICATED MODE: Crawling with full access");
         websiteData = await webCrawlerService.extractWebsiteData(
           url,
           6,
           abortController.signal
+        );
+        console.log(
+          `🔓 AUTHENTICATED MODE: Crawled ${websiteData.totalPagesCrawled} pages`
         );
       }
     } finally {
@@ -367,7 +375,14 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
         response.demo = true;
         response.remainingPages = remainingPages;
         response.demoMessage = `Sign up or log in to access all features. You are seeing a demo experience.`;
-        console.log("[DEMO GATING] Sending demo response:", response.demoMessage + "\n" + response.demo + "\n" + response.remainingPages);
+        console.log(
+          "[DEMO GATING] Sending demo response:",
+          response.demoMessage +
+            "\n" +
+            response.demo +
+            "\n" +
+            response.remainingPages
+        );
       }
 
       console.log("🔍 Backend sending response:", {

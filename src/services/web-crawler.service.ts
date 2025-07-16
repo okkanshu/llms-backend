@@ -83,6 +83,9 @@ export class WebCrawlerService {
         console.log(
           `📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`
         );
+        console.log(
+          `🔗 Queue length: ${toCrawl.length}, Discovered: ${discovered.size}`
+        );
 
         try {
           const res = await this.crawlPage(cur, baseDomain, signal);
@@ -100,6 +103,10 @@ export class WebCrawlerService {
             // console.log(`   Links found: ${res.metadata.links.length}`);
 
             if (res.metadata.links) {
+              console.log(
+                `🔍 Found ${res.metadata.links.length} links on ${cur}`
+              );
+              let addedLinks = 0;
               for (const link of res.metadata.links) {
                 try {
                   const abs = new URL(link, baseUrl).href;
@@ -107,10 +114,13 @@ export class WebCrawlerService {
                     new URL(abs).hostname === baseDomain &&
                     !discovered.has(abs) &&
                     !scrapedUrls.includes(abs) // Check against temporary array
-                  )
+                  ) {
                     toCrawl.push([abs, depth + 1]);
+                    addedLinks++;
+                  }
                 } catch {}
               }
+              console.log(`✅ Added ${addedLinks} new links to crawl queue`);
             }
           } else {
             // console.log(`❌ Failed to crawl: ${cur} - ${res.error}`);
@@ -133,6 +143,12 @@ export class WebCrawlerService {
         }
         await new Promise((r) => setTimeout(r, 500));
       }
+
+      console.log(
+        `🏁 Crawling finished. Pages crawled: ${pages}, Queue empty: ${
+          toCrawl.length === 0
+        }, Max pages reached: ${pages >= maxPages}`
+      );
 
       const uniquePaths = this.extractUniquePaths(
         Array.from(discovered),
