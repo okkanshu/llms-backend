@@ -2,6 +2,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { URL } from "url";
 import { PathSelection } from "../types";
+import mongoose from "mongoose";
 
 interface WebsiteData {
   title: string;
@@ -49,21 +50,24 @@ export class WebCrawlerService {
   async extractWebsiteData(
     url: string,
     maxDepth: number = 6,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    maxPagesOverride?: number // NEW: optional maxPages for demo gating
   ): Promise<WebsiteData> {
     console.log(`🕷️ Starting website extraction for: ${url}`);
     try {
       const baseUrl = this.normalizeUrl(url);
       const baseDomain = new URL(baseUrl).hostname;
-      console.log(`📍 Base URL: ${baseUrl}, Domain: ${baseDomain}`);
+      // console.log(`📍 Base URL: ${baseUrl}, Domain: ${baseDomain}`);
 
       const discovered = new Set<string>(),
         crawled = new Map<string, CrawlResult>(),
         toCrawl: [string, number][] = [[baseUrl, 0]],
         scrapedUrls: string[] = []; // Temporary array to track already scraped URLs
       let pages = 0;
+      const maxPages =
+        typeof maxPagesOverride === "number" ? maxPagesOverride : this.maxPages;
 
-      while (toCrawl.length && pages < this.maxPages) {
+      while (toCrawl.length && pages < maxPages) {
         // Check for cancellation
         if (signal?.aborted) {
           console.log("🛑 Website extraction cancelled by user");
@@ -77,7 +81,7 @@ export class WebCrawlerService {
         pages++;
 
         console.log(
-          `📄 Crawling page ${pages}/${this.maxPages}: ${cur} (depth: ${depth})`
+          `📄 Crawling page ${pages}/${maxPages}: ${cur} (depth: ${depth})`
         );
 
         try {
@@ -85,15 +89,15 @@ export class WebCrawlerService {
           crawled.set(cur, res);
 
           if (res.success) {
-            console.log(`✅ Successfully crawled: ${res.path}`);
-            console.log(`   Title: "${res.metadata.title}"`);
-            console.log(`   Description: "${res.metadata.description}"`);
-            console.log(
-              `   Body content length: ${
-                res.metadata.bodyContent?.length || 0
-              } chars`
-            );
-            console.log(`   Links found: ${res.metadata.links.length}`);
+            // console.log(`✅ Successfully crawled: ${res.path}`);
+            // console.log(`   Title: "${res.metadata.title}"`);
+            // console.log(`   Description: "${res.metadata.description}"`);
+            // console.log(
+            //   `   Body content length: ${
+            //     res.metadata.bodyContent?.length || 0
+            //   } chars`
+            // );
+            // console.log(`   Links found: ${res.metadata.links.length}`);
 
             if (res.metadata.links) {
               for (const link of res.metadata.links) {
@@ -109,11 +113,11 @@ export class WebCrawlerService {
               }
             }
           } else {
-            console.log(`❌ Failed to crawl: ${cur} - ${res.error}`);
+            // console.log(`❌ Failed to crawl: ${cur} - ${res.error}`);
           }
         } catch (e) {
           const errorMsg = e instanceof Error ? e.message : "Unknown error";
-          console.log(`💥 Error crawling ${cur}: ${errorMsg}`);
+          // console.log(`💥 Error crawling ${cur}: ${errorMsg}`);
           crawled.set(cur, {
             url: cur,
             path: this.getPathFromUrl(cur),
@@ -134,10 +138,10 @@ export class WebCrawlerService {
         Array.from(discovered),
         baseUrl
       );
-      console.log(`🔍 Found ${uniquePaths.length} unique paths:`, uniquePaths);
+      // console.log(`🔍 Found ${uniquePaths.length} unique paths:`, uniquePaths);
 
       const pageMetadatas = this.createPageMetadatas(uniquePaths, crawled);
-      console.log(`📊 Created metadata for ${pageMetadatas.length} pages`);
+      // console.log(`📊 Created metadata for ${pageMetadatas.length} pages`);
 
       const main = crawled.get(baseUrl);
       const result = {
@@ -150,17 +154,17 @@ export class WebCrawlerService {
         pageMetadatas,
       };
 
-      console.log(`🎯 Extraction complete:`);
-      console.log(`   Title: "${result.title}"`);
-      console.log(`   Description: "${result.description}"`);
-      console.log(`   Total pages crawled: ${result.totalPagesCrawled}`);
-      console.log(`   Total links found: ${result.totalLinksFound}`);
-      console.log(`   Unique paths: ${result.uniquePathsFound}`);
+      // console.log(`🎯 Extraction complete:`);
+      // console.log(`   Title: "${result.title}"`);
+      // console.log(`   Description: "${result.description}"`);
+      // console.log(`   Total pages crawled: ${result.totalPagesCrawled}`);
+      // console.log(`   Total links found: ${result.totalLinksFound}`);
+      // console.log(`   Unique paths: ${result.uniquePathsFound}`);
 
       return result;
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "Unknown error";
-      console.log(`💥 Failed to extract website data: ${errorMsg}`);
+      // console.log(`💥 Failed to extract website data: ${errorMsg}`);
       throw new Error(`Failed to extract website data: ${errorMsg}`);
     }
   }
@@ -174,7 +178,7 @@ export class WebCrawlerService {
       // Rate limiting for cheerio requests
       await this.enforceRateLimit();
 
-      console.log(`🌐 Fetching: ${url}`);
+      // console.log(`🌐 Fetching: ${url}`);
       const res = await axios.get(url, {
         timeout: this.timeout,
         headers: {
@@ -189,30 +193,30 @@ export class WebCrawlerService {
         signal,
       });
 
-      console.log(
-        `📥 Response status: ${res.status}, Content length: ${res.data.length}`
-      );
+      // console.log(
+      //   `📥 Response status: ${res.status}, Content length: ${res.data.length}`
+      // );
 
       const $ = cheerio.load(res.data);
       const metadata = this.extractMetadata($, url, baseDomain);
       // Add bodyContent for /generate-llms-full
       metadata.bodyContent = this.extractBodyText($);
 
-      console.log(`📝 Extracted metadata for ${url}:`);
-      console.log(`   Title: "${metadata.title}"`);
-      console.log(`   Description: "${metadata.description}"`);
-      console.log(`   Keywords: "${metadata.keywords}"`);
-      console.log(
-        `   Body content preview: "${metadata.bodyContent?.substring(
-          0,
-          100
-        )}..."`
-      );
+      // console.log(`📝 Extracted metadata for ${url}:`);
+      // console.log(`   Title: "${metadata.title}"`);
+      // console.log(`   Description: "${metadata.description}"`);
+      // console.log(`   Keywords: "${metadata.keywords}"`);
+      // console.log(
+      //   `   Body content preview: "${metadata.bodyContent?.substring(
+      //     0,
+      //     100
+      //   )}..."`
+      // );
 
       return { url, path: this.getPathFromUrl(url), metadata, success: true };
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "Unknown error";
-      console.log(`❌ Failed to crawl ${url}: ${errorMsg}`);
+      // console.log(`❌ Failed to crawl ${url}: ${errorMsg}`);
       return {
         url,
         path: this.getPathFromUrl(url),
@@ -250,8 +254,13 @@ export class WebCrawlerService {
       }
     });
 
-    console.log(`🔗 Found ${links.length} internal links on ${url}`);
-    return { title, description, keywords, links: [...new Set(links)] };
+    // console.log(`🔗 Found ${links.length} internal links on ${url}`);
+    return {
+      title,
+      description,
+      keywords: keywords || "",
+      links: [...new Set(links)],
+    };
   }
 
   private normalizeUrl(url: string): string {
@@ -289,23 +298,26 @@ export class WebCrawlerService {
     paths: string[],
     crawled: Map<string, CrawlResult>
   ) {
-    console.log(`📋 Creating page metadata for ${paths.length} paths`);
+    // console.log(`📋 Creating page metadata for ${paths.length} paths`);
     return paths.map((path) => {
       const page = Array.from(crawled.values()).find((p) => p.path === path);
       const metadata = {
         path,
         title: page?.metadata.title || "",
         description: page?.metadata.description || "",
-        keywords: page?.metadata.keywords || "",
+        keywords:
+          typeof page?.metadata.keywords === "string"
+            ? page.metadata.keywords
+            : "",
         bodyContent: page?.metadata.bodyContent || "",
       };
 
-      console.log(`📄 Metadata for ${path}:`);
-      console.log(`   Title: "${metadata.title}"`);
-      console.log(`   Description: "${metadata.description}"`);
-      console.log(
-        `   Body content length: ${metadata.bodyContent.length} chars`
-      );
+      // console.log(`📄 Metadata for ${path}:`);
+      // console.log(`   Title: "${metadata.title}"`);
+      // console.log(`   Description: "${metadata.description}"`);
+      // console.log(
+      //   `   Body content length: ${metadata.bodyContent.length} chars`
+      // );
 
       return metadata;
     });
@@ -320,14 +332,14 @@ export class WebCrawlerService {
   }
 
   convertToPathSelections(paths: string[]): PathSelection[] {
-    console.log(`🔄 Converting ${paths.length} paths to PathSelection objects`);
+    // console.log(`🔄 Converting ${paths.length} paths to PathSelection objects`);
     return paths.map((path) => {
       const selection = {
         path,
         allow: true,
         description: this.generatePathDescription(path),
       };
-      console.log(`   ${path} -> "${selection.description}"`);
+      // console.log(`   ${path} -> "${selection.description}"`);
       return selection;
     });
   }
@@ -366,12 +378,12 @@ export class WebCrawlerService {
     websiteUrl: string,
     maxDepth: number = 6
   ): Promise<{ content: string; totalPages: number; totalWords: number }> {
-    console.log(`📚 Starting LLMs Full generation for: ${websiteUrl}`);
+    // console.log(`📚 Starting LLMs Full generation for: ${websiteUrl}`);
     try {
       const baseUrl = this.normalizeUrl(websiteUrl),
         baseDomain = new URL(baseUrl).hostname,
         timestamp = new Date().toISOString();
-      console.log(`📍 Base URL: ${baseUrl}, Domain: ${baseDomain}`);
+      // console.log(`📍 Base URL: ${baseUrl}, Domain: ${baseDomain}`);
 
       const discovered = new Set<string>(),
         crawled = new Map<string, CrawlResult>(),
@@ -386,22 +398,22 @@ export class WebCrawlerService {
         scrapedUrls.push(cur); // Add to temporary array
         pages++;
 
-        console.log(
-          `📄 LLMs Full - Crawling page ${pages}/${this.maxPages}: ${cur} (depth: ${depth})`
-        );
+        // console.log(
+        //   `📄 LLMs Full - Crawling page ${pages}/${this.maxPages}: ${cur} (depth: ${depth})`
+        // );
 
         try {
           const res = await this.crawlPage(cur, baseDomain);
           crawled.set(cur, res);
 
           if (res.success) {
-            console.log(`✅ LLMs Full - Successfully crawled: ${res.path}`);
-            console.log(`   Title: "${res.metadata.title}"`);
-            console.log(
-              `   Body content length: ${
-                res.metadata.bodyContent?.length || 0
-              } chars`
-            );
+            // console.log(`✅ LLMs Full - Successfully crawled: ${res.path}`);
+            // console.log(`   Title: "${res.metadata.title}"`);
+            // console.log(
+            //   `   Body content length: ${
+            //     res.metadata.bodyContent?.length || 0
+            //   } chars`
+            // );
 
             if (res.metadata.links) {
               for (const link of res.metadata.links) {
@@ -417,9 +429,9 @@ export class WebCrawlerService {
               }
             }
           } else {
-            console.log(
-              `❌ LLMs Full - Failed to crawl: ${cur} - ${res.error}`
-            );
+            // console.log(
+            //   `❌ LLMs Full - Failed to crawl: ${cur} - ${res.error}`
+            // );
           }
         } catch {}
         await new Promise((r) => setTimeout(r, 500));
@@ -434,7 +446,7 @@ export class WebCrawlerService {
         bodyContent: string;
       }[] = [];
 
-      console.log(`📋 Processing ${crawled.size} crawled pages for LLMs Full`);
+      // console.log(`📋 Processing ${crawled.size} crawled pages for LLMs Full`);
 
       for (const [url, crawlResult] of crawled.entries()) {
         let bodyContent = crawlResult.metadata.bodyContent || "";
@@ -448,10 +460,10 @@ export class WebCrawlerService {
           bodyContent,
         };
 
-        console.log(`📄 LLMs Full - Page: ${page.path}`);
-        console.log(`   Title: "${page.title}"`);
-        console.log(`   Body content length: ${bodyContent.length} chars`);
-        console.log(`   Body preview: "${bodyContent.substring(0, 100)}..."`);
+        // console.log(`📄 LLMs Full - Page: ${page.path}`);
+        // console.log(`   Title: "${page.title}"`);
+        // console.log(`   Body content length: ${bodyContent.length} chars`);
+        // console.log(`   Body preview: "${bodyContent.substring(0, 100)}..."`);
 
         allPages.push(page);
       }
@@ -474,27 +486,27 @@ export class WebCrawlerService {
         totalWords += page.bodyContent.split(/\s+/).length;
       });
 
-      console.log(`📚 LLMs Full generation complete:`);
-      console.log(`   Total pages: ${allPages.length}`);
-      console.log(`   Total words: ${totalWords}`);
-      console.log(`   Content length: ${content.length} chars`);
+      // console.log(`📚 LLMs Full generation complete:`);
+      // console.log(`   Total pages: ${allPages.length}`);
+      // console.log(`   Total words: ${totalWords}`);
+      // console.log(`   Content length: ${content.length} chars`);
 
       return { content, totalPages: allPages.length, totalWords };
     } catch (e) {
       const errorMsg = e instanceof Error ? e.message : "Unknown error";
-      console.log(`💥 Failed to generate llms-full.txt: ${errorMsg}`);
+      // console.log(`💥 Failed to generate llms-full.txt: ${errorMsg}`);
       throw new Error(`Failed to generate llms-full.txt: ${errorMsg}`);
     }
   }
 
   // Extract readable body content from HTML
   private extractBodyText($: cheerio.CheerioAPI): string {
-    console.log(`🧹 Cleaning HTML for body text extraction`);
+    // console.log(`🧹 Cleaning HTML for body text extraction`);
 
     $("script, style, noscript, iframe, svg").remove();
 
     const bodyText = $("body").text();
-    console.log(`📝 Raw body text length: ${bodyText.length} chars`);
+    // console.log(`📝 Raw body text length: ${bodyText.length} chars`);
 
     const cleanedText = bodyText
       .replace(/[ \t]+/g, " ")
@@ -502,8 +514,8 @@ export class WebCrawlerService {
       .trim();
 
     const finalText = cleanedText.slice(0, 30000); // Increased from 2000 to 30000
-    console.log(`✨ Cleaned body text length: ${finalText.length} chars`);
-    console.log(`📖 Body text preview: "${finalText.substring(0, 100)}..."`);
+    // console.log(`✨ Cleaned body text length: ${finalText.length} chars`);
+    // console.log(`📖 Body text preview: "${finalText.substring(0, 100)}..."`);
 
     return finalText;
   }
@@ -515,16 +527,16 @@ export class WebCrawlerService {
     keywords: string;
     bodySnippet: string;
   }> {
-    console.log(`🌐 Starting scraping for: ${url}`);
+    // console.log(`🌐 Starting scraping for: ${url}`);
 
     try {
       // Use Cheerio scraping
-      console.log(`⚡ Attempting Cheerio scraping...`);
+      // console.log(`⚡ Attempting Cheerio scraping...`);
       const cheerioResult = await this.scrapeWithCheerio(url);
-      console.log(`✅ Cheerio scraping completed`);
+      // console.log(`✅ Cheerio scraping completed`);
       return cheerioResult;
     } catch (error) {
-      console.log(`❌ Scraping failed: ${error}`);
+      // console.log(`❌ Scraping failed: ${error}`);
       return {
         title: "",
         description: "",
@@ -592,7 +604,7 @@ export class WebCrawlerService {
 
     if (timeSinceLastRequest < this.rateLimiter.minInterval) {
       const delay = this.rateLimiter.minInterval - timeSinceLastRequest;
-      console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
+      // console.log(`⏱️ Rate limiting: waiting ${delay}ms`);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
 

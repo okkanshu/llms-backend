@@ -81,36 +81,23 @@ export interface MarkdownGenerationResponse {
 }
 export declare const WebsiteAnalysisRequestSchema: z.ZodObject<{
     url: z.ZodString;
-    bots: z.ZodArray<z.ZodEnum<["ChatGPT-User", "GPTBot", "GoogleExtended", "Claude", "Anthropic", "CCBot"]>, "many">;
+    bots: z.ZodArray<z.ZodEnum<{
+        "ChatGPT-User": "ChatGPT-User";
+        GPTBot: "GPTBot";
+        GoogleExtended: "GoogleExtended";
+        Claude: "Claude";
+        Anthropic: "Anthropic";
+        CCBot: "CCBot";
+    }>>;
     aiEnrichment: z.ZodOptional<z.ZodBoolean>;
-}, "strip", z.ZodTypeAny, {
-    url: string;
-    bots: ("ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot")[];
-    aiEnrichment?: boolean | undefined;
-}, {
-    url: string;
-    bots: ("ChatGPT-User" | "GPTBot" | "GoogleExtended" | "Claude" | "Anthropic" | "CCBot")[];
-    aiEnrichment?: boolean | undefined;
-}>;
+}, z.core.$strip>;
 export declare const LLMsFullPayloadSchema: z.ZodObject<{
     websiteUrl: z.ZodString;
     includeImages: z.ZodOptional<z.ZodBoolean>;
     includeLinks: z.ZodOptional<z.ZodBoolean>;
     maxDepth: z.ZodOptional<z.ZodNumber>;
     aiEnrichment: z.ZodOptional<z.ZodBoolean>;
-}, "strip", z.ZodTypeAny, {
-    websiteUrl: string;
-    aiEnrichment?: boolean | undefined;
-    includeImages?: boolean | undefined;
-    includeLinks?: boolean | undefined;
-    maxDepth?: number | undefined;
-}, {
-    websiteUrl: string;
-    aiEnrichment?: boolean | undefined;
-    includeImages?: boolean | undefined;
-    includeLinks?: boolean | undefined;
-    maxDepth?: number | undefined;
-}>;
+}, z.core.$strip>;
 export interface LLMBotConfig {
     name: LLMBot;
     userAgent: string;

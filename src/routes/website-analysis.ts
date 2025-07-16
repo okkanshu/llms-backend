@@ -6,6 +6,9 @@ import {
   WebsiteAnalysisResponse,
   AIGeneratedContent,
 } from "../types";
+import { estimateCrawlTime } from "../services/llms-full.service";
+import nodemailer from "nodemailer";
+import { CrawlResultModel } from "../models";
 
 const router = Router();
 const activeSessions = new Map<string, AbortController>();
@@ -45,6 +48,25 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
   const bots = (req.query.bots as string)?.split(",").filter(Boolean) || [];
   const aiEnrichment = req.query.aiEnrichment === "true";
   const sessionId = req.query.sessionId as string;
+
+  const authHeader = req.headers["authorization"];
+  let isAuthenticated = false;
+  let userEmail = null;
+  if (
+    authHeader &&
+    typeof authHeader === "string" &&
+    authHeader.startsWith("Bearer ")
+  ) {
+    // Optionally, you could verify the JWT here for extra security
+    isAuthenticated = true;
+    userEmail = authHeader.replace("Bearer ", "").trim();
+  }
+  console.log(
+    "[AUTH CHECK] Authorization header:",
+    authHeader,
+    "| isAuthenticated:",
+    isAuthenticated
+  );
 
   const abortController = new AbortController();
   if (sessionId) activeSessions.set(sessionId, abortController);
@@ -96,7 +118,21 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     }, 3000);
 
     try {
-      websiteData = await webCrawlerService.extractWebsiteData(url, 6, abortController.signal);
+      // For unauthenticated (demo) users, only crawl/scrape 5 pages
+      if (!isAuthenticated) {
+        websiteData = await webCrawlerService.extractWebsiteData(
+          url,
+          6,
+          abortController.signal,
+          5 // maxPagesOverride for demo
+        );
+      } else {
+        websiteData = await webCrawlerService.extractWebsiteData(
+          url,
+          6,
+          abortController.signal
+        );
+      }
     } finally {
       clearInterval(crawlHeartbeat);
     }
@@ -109,14 +145,150 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     );
     sendEvent("progress", { progress: 60, message: "Paths converted" });
 
+    // DEMO GATING: Check for Authorization header
+    let demoLimit = 5;
+
+    // Estimate crawl time (10s per page)
+    const estimatedCrawlTime = estimateCrawlTime(pathSelections.length);
+    const longJobThreshold = 10 * 60; // 10 minutes in seconds
+
+    // If authenticated and estimated time > 10 min, trigger async job
+    if (isAuthenticated && estimatedCrawlTime > longJobThreshold) {
+      // Get user email from Authorization (for demo, parse as 'Bearer email')
+      const authHeader = req.headers["authorization"];
+      let userEmail = null;
+      if (
+        authHeader &&
+        typeof authHeader === "string" &&
+        authHeader.startsWith("Bearer ")
+      ) {
+        userEmail = authHeader.replace("Bearer ", "").trim();
+      }
+      if (!userEmail) {
+        sendEvent("result", {
+          success: false,
+          error: "Unable to determine user email for async delivery.",
+        });
+        res.end();
+        return;
+      }
+      // Respond immediately to frontend
+      sendEvent("result", {
+        success: true,
+        asyncJob: true,
+        message: `This job will take more than 10 minutes. You can leave the site; we will email your llms.txt to ${userEmail} once it's ready.`,
+      });
+      sendEvent("progress", { progress: 100, message: "Async job started" });
+      res.end();
+      // Start background job (no await)
+      (async () => {
+        try {
+          // Re-crawl in background (no abort signal)
+          const websiteData = await webCrawlerService.extractWebsiteData(
+            url,
+            6
+          );
+          // Generate llms.txt content (simulate, or use real logic)
+          const pathSelections = webCrawlerService.convertToPathSelections(
+            websiteData.paths
+          );
+          let content = `llms.txt for ${url}\nPages: ${websiteData.totalPagesCrawled}\n...`;
+          // TODO: Use real llms.txt generation logic if needed
+          // Send email with llms.txt as attachment
+          const transporter = nodemailer.createTransport({
+            host: process.env.SMTP_HOST || "smtp.gmail.com",
+            port: Number(process.env.SMTP_PORT) || 465,
+            secure: true,
+            auth: {
+              user: process.env.SMTP_USER || "dummy@gmail.com",
+              pass: process.env.SMTP_PASS || "yourpassword",
+            },
+          });
+          await transporter.sendMail({
+            from: process.env.SMTP_USER || "dummy@gmail.com",
+            to: userEmail,
+            subject: `Your llms.txt is ready!`,
+            text: `Your llms.txt file for ${url} is attached.`,
+            attachments: [
+              {
+                filename: "llms.txt",
+                content,
+                contentType: "text/plain",
+              },
+            ],
+          });
+          console.log(`✅ llms.txt sent to ${userEmail}`);
+          // Save crawl result to MongoDB (jobStatus: completed)
+          await CrawlResultModel.create({
+            url,
+            user: userEmail,
+            sessionId,
+            crawledData: websiteData,
+            email: userEmail,
+            jobStatus: "completed",
+          });
+        } catch (err) {
+          console.error("❌ Failed to send async llms.txt email:", err);
+        }
+      })();
+      return;
+    }
+
+    // After crawling and before sending response
+    // Save crawl result to MongoDB
+    (async () => {
+      try {
+        await CrawlResultModel.create({
+          url,
+          user: isAuthenticated
+            ? req.headers["authorization"]
+              ? String(req.headers["authorization"])
+                  .replace("Bearer ", "")
+                  .trim()
+              : undefined
+            : undefined,
+          sessionId,
+          crawledData: websiteData,
+          email: isAuthenticated
+            ? req.headers["authorization"]
+              ? String(req.headers["authorization"])
+                  .replace("Bearer ", "")
+                  .trim()
+              : undefined
+            : undefined,
+          jobStatus: "completed",
+        });
+      } catch (err) {
+        console.error("❌ Failed to save crawl result to MongoDB:", err);
+      }
+    })();
+
+    let gatedPathSelections = pathSelections;
+    let gatedPageMetadatas = websiteData.pageMetadatas;
+    let isDemo = false;
+    let remainingPages = 0;
+    if (!isAuthenticated) {
+      isDemo = true;
+      // Optionally, you can still limit the number of pages for demo users if needed:
+      // gatedPathSelections = pathSelections.slice(0, demoLimit);
+      // gatedPageMetadatas = websiteData.pageMetadatas?.slice(0, demoLimit);
+      remainingPages =
+        pathSelections.length > demoLimit
+          ? pathSelections.length - demoLimit
+          : 0;
+    } else if (pathSelections.length > demoLimit) {
+      // Keep the original logic for authenticated users if needed
+      remainingPages = pathSelections.length - demoLimit;
+    }
+
     let aiGeneratedContent: AIGeneratedContent[] = [];
     let rateLimitHit = false;
 
     if (aiEnrichment) {
-      const total = pathSelections.length;
+      const total = gatedPathSelections.length;
       let completed = 0;
 
-      for (const path of pathSelections) {
+      for (const path of gatedPathSelections) {
         if (checkCancellation()) return;
 
         try {
@@ -173,7 +345,11 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
     }
 
     if (!aiEnrichment || !rateLimitHit) {
-      const response: WebsiteAnalysisResponse = {
+      const response: WebsiteAnalysisResponse & {
+        demo?: boolean;
+        remainingPages?: number;
+        demoMessage?: string;
+      } = {
         success: true,
         metadata: {
           title: websiteData.title,
@@ -183,10 +359,16 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
           totalLinksFound: websiteData.totalLinksFound,
           uniquePathsFound: websiteData.uniquePathsFound,
         },
-        paths: pathSelections,
-        pageMetadatas: websiteData.pageMetadatas,
+        paths: gatedPathSelections,
+        pageMetadatas: gatedPageMetadatas,
         aiGeneratedContent: aiEnrichment ? aiGeneratedContent : undefined,
       };
+      if (!isAuthenticated) {
+        response.demo = true;
+        response.remainingPages = remainingPages;
+        response.demoMessage = `Sign up or log in to access all features. You are seeing a demo experience.`;
+        console.log("[DEMO GATING] Sending demo response:", response.demoMessage + "\n" + response.demo + "\n" + response.remainingPages);
+      }
 
       console.log("🔍 Backend sending response:", {
         aiEnrichment,
@@ -196,6 +378,7 @@ router.get("/analyze-website", async (req: Request, res: Response) => {
         aiContentSample: response.aiGeneratedContent?.slice(0, 2),
       });
 
+      // console.log("[RESULT EVENT] Sending response:", response);
       sendEvent("result", response);
       sendEvent("progress", { progress: 100, message: "Analysis complete" });
     }

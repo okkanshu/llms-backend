@@ -10,13 +10,29 @@ import websiteAnalysisRoutes from "./routes/website-analysis";
 import llmsEnhancedRoutes from "./routes/llms-enhanced";
 import llmsGeneratorRoutes from "./routes/llms-generator";
 import contactRoutes from "./routes/contact";
-console.log("\uD83D\uDCAC contactRoutes type:", typeof contactRoutes);
+import authRoutes from "./routes/auth";
+import mongoose from "mongoose";
+// console.log("\uD83D\uDCAC contactRoutes type:", typeof contactRoutes);
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+
+// MongoDB connection
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+  console.error("❌ MONGODB_URI not set in environment variables");
+  process.exit(1);
+}
+mongoose
+  .connect(mongoUri)
+  .then(() => console.log("✅ Connected to MongoDB"))
+  .catch((err) => {
+    console.error("❌ MongoDB connection error:", err);
+    process.exit(1);
+  });
 
 // CORS configuration - must come BEFORE other middleware
 const allowedOrigins = [
@@ -119,7 +135,7 @@ app.get("/health", (req, res) => {
     service: "TheLLMsTxt Backend",
     version: "1.0.0",
     features: {
-      ai_enrichment: !!process.env.GEMINI_API_KEY,
+      ai_enrichment: !!process.env.XAI_API_KEY,
       automation: process.env.AUTOMATION_ENABLED === "true",
       analytics: process.env.ANALYTICS_ENABLED === "true",
     },
@@ -136,18 +152,11 @@ app.get("/api/llm-bots", (req, res) => {
 
 // API Documentation
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(specs));
-
-// Website analysis routes
 app.use("/api", websiteAnalysisRoutes);
-
-// Enhanced LLMs routes
 app.use("/api", llmsEnhancedRoutes);
-
-// LLMs generator routes
 app.use("/api", llmsGeneratorRoutes);
-
-// Contact routes
 app.use("/api", contactRoutes);
+app.use("/api", authRoutes);
 
 // Root endpoint
 app.get("/", (req, res) => {

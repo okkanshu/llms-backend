@@ -18,7 +18,7 @@ router.post("/generate-llms-full", async (req: Request, res: Response) => {
 
   try {
     console.log("🚀 Starting llms-full.txt generation request");
-    console.log("📥 Request body:", req.body);
+    // console.log("📥 Request body:", req.body);
 
     // Validate request body
     const validationResult = LLMsFullPayloadSchema.safeParse(req.body);
@@ -26,29 +26,29 @@ router.post("/generate-llms-full", async (req: Request, res: Response) => {
     if (!validationResult.success) {
       console.error(
         "❌ Request validation failed:",
-        validationResult.error.errors
+        validationResult.error.issues
       );
       res.status(400).json({
         success: false,
         error: "Invalid request data",
-        details: validationResult.error.errors,
+        details: validationResult.error.issues,
       });
       return;
     }
 
     const payload = validationResult.data;
-    console.log("✅ Request validation passed");
+    // console.log("✅ Request validation passed");
 
     // Generate llms-full.txt
     const result = await llmsFullService.generateLLMsFull(payload);
 
     const totalTime = Date.now() - startTime;
-    console.log("✅ llms-full.txt generation completed:", {
-      totalTime: `${totalTime}ms`,
-      success: result.success,
-      totalPages: result.totalPages,
-      totalWords: result.totalWords,
-    });
+    // console.log("✅ llms-full.txt generation completed:", {
+    //   totalTime: `${totalTime}ms`,
+    //   success: result.success,
+    //   totalPages: result.totalPages,
+    //   totalWords: result.totalWords,
+    // });
 
     res.json(result);
   } catch (error) {
@@ -77,8 +77,8 @@ router.post("/generate-markdown", async (req: Request, res: Response) => {
   const startTime = Date.now();
 
   try {
-    console.log("🚀 Starting markdown generation request");
-    console.log("📥 Request body:", req.body);
+    // console.log("🚀 Starting markdown generation request");
+    // console.log("📥 Request body:", req.body);
 
     const { websiteUrl } = req.body;
 
@@ -97,11 +97,11 @@ router.post("/generate-markdown", async (req: Request, res: Response) => {
     );
 
     const totalTime = Date.now() - startTime;
-    console.log("✅ Markdown generation completed:", {
-      totalTime: `${totalTime}ms`,
-      success: result.success,
-      totalFiles: result.files.length,
-    });
+    // console.log("✅ Markdown generation completed:", {
+    //   totalTime: `${totalTime}ms`,
+    //   success: result.success,
+    //   totalFiles: result.files.length,
+    // });
 
     res.json(result);
   } catch (error) {

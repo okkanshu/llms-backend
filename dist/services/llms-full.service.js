@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.llmsFullService = exports.LLMsFullService = void 0;
+exports.estimateCrawlTime = estimateCrawlTime;
 const ai_service_1 = require("./ai.service");
 const web_crawler_service_1 = require("./web-crawler.service");
 const dotenv_1 = __importDefault(require("dotenv"));
@@ -291,5 +292,8 @@ class LLMsFullService {
     }
 }
 exports.LLMsFullService = LLMsFullService;
+function estimateCrawlTime(numPages) {
+    return Math.min(numPages, 1000) * 10;
+}
 exports.llmsFullService = new LLMsFullService();
 //# sourceMappingURL=llms-full.service.js.map

@@ -34,7 +34,7 @@ export declare class WebCrawlerService {
     private timeout;
     private userAgent;
     private rateLimiter;
-    extractWebsiteData(url: string, maxDepth?: number, signal?: AbortSignal): Promise<WebsiteData>;
+    extractWebsiteData(url: string, maxDepth?: number, signal?: AbortSignal, maxPagesOverride?: number): Promise<WebsiteData>;
     crawlPage(url: string, baseDomain: string, signal?: AbortSignal): Promise<CrawlResult>;
     private extractMetadata;
     private normalizeUrl;

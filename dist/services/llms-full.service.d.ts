@@ -10,5 +10,6 @@ export declare class LLMsFullService {
     private enforceRateLimit;
     private groupPagesByDepth;
 }
+export declare function estimateCrawlTime(numPages: number): number;
 export declare const llmsFullService: LLMsFullService;
 //# sourceMappingURL=llms-full.service.d.ts.map

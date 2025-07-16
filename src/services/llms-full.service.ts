@@ -434,4 +434,9 @@ export class LLMsFullService {
   }
 }
 
+// Utility: Estimate crawl time in seconds (10s per page, max 1000 pages)
+export function estimateCrawlTime(numPages: number): number {
+  return Math.min(numPages, 1000) * 10;
+}
+
 export const llmsFullService = new LLMsFullService();

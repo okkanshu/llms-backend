@@ -39,7 +39,6 @@ class XAIRateLimiter {
         this.processing = true;
         while (this.queue.length > 0) {
             if (this.abortSignal?.aborted) {
-                console.log(`[X.AI] Queue processing cancelled for session: ${this.sessionId}`);
                 this.queue = [];
                 this.processing = false;
                 return;
@@ -53,13 +52,11 @@ class XAIRateLimiter {
                 const request = this.queue.shift();
                 if (request) {
                     this.requestCount++;
-                    console.log(`[X.AI] Processing request ${this.requestCount}/${this.MAX_REQUESTS_PER_SECOND} per second`);
                     await request();
                 }
             }
             else {
                 const waitTime = this.RESET_INTERVAL - (now - this.lastResetTime);
-                console.log(`[X.AI] Rate limit reached, waiting ${Math.round(waitTime)}ms for next second`);
                 await new Promise((resolve) => setTimeout(resolve, waitTime));
             }
         }
@@ -68,9 +65,6 @@ class XAIRateLimiter {
 }
 const globalRateLimiter = new XAIRateLimiter();
 const sessionRateLimiters = new Map();
-console.log("🔑 Loaded XAI_API_KEY:", process.env.XAI_API_KEY
-    ? process.env.XAI_API_KEY.slice(0, 8) + "..."
-    : undefined);
 const XAI_API_KEY = process.env.XAI_API_KEY || "";
 const XAI_MODEL = process.env.XAI_MODEL || "grok-3-mini";
 const XAI_API_URL = process.env.XAI_API_URL || "https://api.x.ai/v1";
@@ -86,7 +80,6 @@ async function callXAI(messages, temperature = 0.7, maxTokens = 1024, signal, se
         }
     }
     return sessionLimiter.executeRequest(async () => {
-        console.log("📡 Sending auth header:", `Bearer ${XAI_API_KEY ? XAI_API_KEY.slice(0, 8) + "..." : ""}`);
         const response = await fetch(`${XAI_API_URL}/chat/completions`, {
             method: "POST",
             headers: {
@@ -113,7 +106,6 @@ async function callXAI(messages, temperature = 0.7, maxTokens = 1024, signal, se
             throw new Error(`X.AI API error: ${response.status} - ${errorText}`);
         }
         const data = (await response.json());
-        console.log(`[X.AI] API call successful. Rate limiting handled by queue.`);
         return data.choices?.[0]?.message?.content?.trim() || "";
     });
 }
@@ -152,8 +144,6 @@ Return only the formatted response with the exact labels shown above.`;
             ], 0.7, 1024, signal, sessionId);
             const lines = result.split("\n").filter((line) => line.trim());
             const parsed = {};
-            console.log("🔍 AI raw response:", result);
-            console.log("🔍 AI parsed lines:", lines);
             for (const line of lines) {
                 if (line.startsWith("SUMMARY:")) {
                     parsed.summary = line.replace("SUMMARY:", "").trim();
@@ -184,7 +174,6 @@ Return only the formatted response with the exact labels shown above.`;
                         .toLowerCase();
                 }
             }
-            console.log("🔍 AI parsed result:", parsed);
             const allowedContentTypes = [
                 "page",
                 "blog",

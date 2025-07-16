@@ -1,9 +1,15 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const web_crawler_service_1 = require("../services/web-crawler.service");
 const ai_service_1 = require("../services/ai.service");
 const types_1 = require("../types");
+const llms_full_service_1 = require("../services/llms-full.service");
+const nodemailer_1 = __importDefault(require("nodemailer"));
+const models_1 = require("../models");
 const router = (0, express_1.Router)();
 const activeSessions = new Map();
 router.post("/analyze-website", (_req, res) => {
@@ -38,6 +44,16 @@ router.get("/analyze-website", async (req, res) => {
     const bots = req.query.bots?.split(",").filter(Boolean) || [];
     const aiEnrichment = req.query.aiEnrichment === "true";
     const sessionId = req.query.sessionId;
+    const authHeader = req.headers["authorization"];
+    let isAuthenticated = false;
+    let userEmail = null;
+    if (authHeader &&
+        typeof authHeader === "string" &&
+        authHeader.startsWith("Bearer ")) {
+        isAuthenticated = true;
+        userEmail = authHeader.replace("Bearer ", "").trim();
+    }
+    console.log("[AUTH CHECK] Authorization header:", authHeader, "| isAuthenticated:", isAuthenticated);
     const abortController = new AbortController();
     if (sessionId)
         activeSessions.set(sessionId, abortController);
@@ -84,7 +100,12 @@ router.get("/analyze-website", async (req, res) => {
             }
         }, 3000);
         try {
-            websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal);
+            if (!isAuthenticated) {
+                websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal, 5);
+            }
+            else {
+                websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6, abortController.signal);
+            }
         }
         finally {
             clearInterval(crawlHeartbeat);
@@ -94,12 +115,122 @@ router.get("/analyze-website", async (req, res) => {
         sendEvent("progress", { progress: 99, message: "Website data extracted" });
         const pathSelections = web_crawler_service_1.webCrawlerService.convertToPathSelections(websiteData.paths);
         sendEvent("progress", { progress: 60, message: "Paths converted" });
+        let demoLimit = 5;
+        const estimatedCrawlTime = (0, llms_full_service_1.estimateCrawlTime)(pathSelections.length);
+        const longJobThreshold = 10 * 60;
+        if (isAuthenticated && estimatedCrawlTime > longJobThreshold) {
+            const authHeader = req.headers["authorization"];
+            let userEmail = null;
+            if (authHeader &&
+                typeof authHeader === "string" &&
+                authHeader.startsWith("Bearer ")) {
+                userEmail = authHeader.replace("Bearer ", "").trim();
+            }
+            if (!userEmail) {
+                sendEvent("result", {
+                    success: false,
+                    error: "Unable to determine user email for async delivery.",
+                });
+                res.end();
+                return;
+            }
+            sendEvent("result", {
+                success: true,
+                asyncJob: true,
+                message: `This job will take more than 10 minutes. You can leave the site; we will email your llms.txt to ${userEmail} once it's ready.`,
+            });
+            sendEvent("progress", { progress: 100, message: "Async job started" });
+            res.end();
+            (async () => {
+                try {
+                    const websiteData = await web_crawler_service_1.webCrawlerService.extractWebsiteData(url, 6);
+                    const pathSelections = web_crawler_service_1.webCrawlerService.convertToPathSelections(websiteData.paths);
+                    let content = `llms.txt for ${url}\nPages: ${websiteData.totalPagesCrawled}\n...`;
+                    const transporter = nodemailer_1.default.createTransport({
+                        host: process.env.SMTP_HOST || "smtp.gmail.com",
+                        port: Number(process.env.SMTP_PORT) || 465,
+                        secure: true,
+                        auth: {
+                            user: process.env.SMTP_USER || "dummy@gmail.com",
+                            pass: process.env.SMTP_PASS || "yourpassword",
+                        },
+                    });
+                    await transporter.sendMail({
+                        from: process.env.SMTP_USER || "dummy@gmail.com",
+                        to: userEmail,
+                        subject: `Your llms.txt is ready!`,
+                        text: `Your llms.txt file for ${url} is attached.`,
+                        attachments: [
+                            {
+                                filename: "llms.txt",
+                                content,
+                                contentType: "text/plain",
+                            },
+                        ],
+                    });
+                    console.log(`✅ llms.txt sent to ${userEmail}`);
+                    await models_1.CrawlResultModel.create({
+                        url,
+                        user: userEmail,
+                        sessionId,
+                        crawledData: websiteData,
+                        email: userEmail,
+                        jobStatus: "completed",
+                    });
+                }
+                catch (err) {
+                    console.error("❌ Failed to send async llms.txt email:", err);
+                }
+            })();
+            return;
+        }
+        (async () => {
+            try {
+                await models_1.CrawlResultModel.create({
+                    url,
+                    user: isAuthenticated
+                        ? req.headers["authorization"]
+                            ? String(req.headers["authorization"])
+                                .replace("Bearer ", "")
+                                .trim()
+                            : undefined
+                        : undefined,
+                    sessionId,
+                    crawledData: websiteData,
+                    email: isAuthenticated
+                        ? req.headers["authorization"]
+                            ? String(req.headers["authorization"])
+                                .replace("Bearer ", "")
+                                .trim()
+                            : undefined
+                        : undefined,
+                    jobStatus: "completed",
+                });
+            }
+            catch (err) {
+                console.error("❌ Failed to save crawl result to MongoDB:", err);
+            }
+        })();
+        let gatedPathSelections = pathSelections;
+        let gatedPageMetadatas = websiteData.pageMetadatas;
+        let isDemo = false;
+        let remainingPages = 0;
+        if (!isAuthenticated) {
+            isDemo = true;
+            remainingPages =
+                pathSelections.length > demoLimit
+                    ? pathSelections.length - demoLimit
+                    : 0;
+        }
+        else if (pathSelections.length > demoLimit) {
+            remainingPages = pathSelections.length - demoLimit;
+        }
         let aiGeneratedContent = [];
         let rateLimitHit = false;
         if (aiEnrichment) {
-            const total = pathSelections.length;
+            const total = gatedPathSelections.length;
             let completed = 0;
-            for (const path of pathSelections) {
+            for (const path of gatedPathSelections) {
                 if (checkCancellation())
                     return;
                 try {
@@ -157,10 +288,16 @@ router.get("/analyze-website", async (req, res) => {
                     totalLinksFound: websiteData.totalLinksFound,
                     uniquePathsFound: websiteData.uniquePathsFound,
                 },
-                paths: pathSelections,
-                pageMetadatas: websiteData.pageMetadatas,
+                paths: gatedPathSelections,
+                pageMetadatas: gatedPageMetadatas,
                 aiGeneratedContent: aiEnrichment ? aiGeneratedContent : undefined,
             };
+            if (!isAuthenticated) {
+                response.demo = true;
+                response.remainingPages = remainingPages;
+                response.demoMessage = `Sign up or log in to access all features. You are seeing a demo experience.`;
+                console.log("[DEMO GATING] Sending demo response:", response.demoMessage + "\n" + response.demo + "\n" + response.remainingPages);
+            }
             console.log("🔍 Backend sending response:", {
                 aiEnrichment,
                 rateLimitHit,

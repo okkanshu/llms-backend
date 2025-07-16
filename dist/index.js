@@ -15,10 +15,23 @@ const website_analysis_1 = __importDefault(require("./routes/website-analysis"))
 const llms_enhanced_1 = __importDefault(require("./routes/llms-enhanced"));
 const llms_generator_1 = __importDefault(require("./routes/llms-generator"));
 const contact_1 = __importDefault(require("./routes/contact"));
-console.log("\uD83D\uDCAC contactRoutes type:", typeof contact_1.default);
+const auth_1 = __importDefault(require("./routes/auth"));
+const mongoose_1 = __importDefault(require("mongoose"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 8000;
+const mongoUri = process.env.MONGODB_URI;
+if (!mongoUri) {
+    console.error("❌ MONGODB_URI not set in environment variables");
+    process.exit(1);
+}
+mongoose_1.default
+    .connect(mongoUri)
+    .then(() => console.log("✅ Connected to MongoDB"))
+    .catch((err) => {
+    console.error("❌ MongoDB connection error:", err);
+    process.exit(1);
+});
 const allowedOrigins = [
     "https://thellmstxt.com",
     "https://llmstxt.store",
@@ -104,7 +117,7 @@ app.get("/health", (req, res) => {
         service: "TheLLMsTxt Backend",
         version: "1.0.0",
         features: {
-            ai_enrichment: !!process.env.GEMINI_API_KEY,
+            ai_enrichment: !!process.env.XAI_API_KEY,
             automation: process.env.AUTOMATION_ENABLED === "true",
             analytics: process.env.ANALYTICS_ENABLED === "true",
         },
@@ -121,6 +134,7 @@ app.use("/api", website_analysis_1.default);
 app.use("/api", llms_enhanced_1.default);
 app.use("/api", llms_generator_1.default);
 app.use("/api", contact_1.default);
+app.use("/api", auth_1.default);
 app.get("/", (req, res) => {
     res.json({
         success: true,
