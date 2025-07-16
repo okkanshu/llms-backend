@@ -46,6 +46,11 @@ const addContactToBrevo = async (contactData) => {
         listIds: [parseInt(listId)],
         updateEnabled: true,
     };
+    console.log("[Brevo] ENV:", {
+        BREVO_API_KEY: apiKey ? "***set***" : "NOT SET",
+        BREVO_LIST_ID: listId,
+    });
+    console.log("[Brevo] Payload:", contactPayload);
     try {
         console.log("Adding contact to Brevo:", {
             email: contactData.email,
@@ -61,12 +66,22 @@ const addContactToBrevo = async (contactData) => {
             },
             body: JSON.stringify(contactPayload),
         });
-        if (!response.ok) {
-            const errorData = await response.json();
-            console.error("Brevo API error:", errorData);
-            throw new Error(`Brevo API error: ${response.status} - ${JSON.stringify(errorData)}`);
+        console.log(`[Brevo] Response status: ${response.status}`);
+        console.log(`[Brevo] Response headers:`, response.headers);
+        const responseText = await response.text();
+        console.log(`[Brevo] Raw response body:`, responseText);
+        let result;
+        try {
+            result = responseText ? JSON.parse(responseText) : null;
         }
-        const result = await response.json();
+        catch (jsonErr) {
+            console.error("[Brevo] Failed to parse response as JSON:", jsonErr);
+            result = null;
+        }
+        if (!response.ok) {
+            console.error("[Brevo] API error:", result || responseText);
+            throw new Error(`Brevo API error: ${response.status} - ${JSON.stringify(result || responseText)}`);
+        }
         console.log("Contact added to Brevo successfully:", result);
         return result;
     }
