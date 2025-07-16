@@ -142,6 +142,16 @@ app.get("/health", (req, res) => {
   });
 });
 
+// Test route to check server's public IP
+app.get("/my-ip", async (req, res) => {
+  try {
+    const ip = await fetch("https://ipinfo.io/ip").then((r) => r.text());
+    res.send(`Render IP: ${ip}`);
+  } catch (err) {
+    res.status(500).send("Failed to fetch public IP");
+  }
+});
+
 // Get available LLM bots
 app.get("/api/llm-bots", (req, res) => {
   res.json({
